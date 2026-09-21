@@ -1,0 +1,34 @@
+{
+  "model_sha256": "20c8821eee5eae466023f6ecc7355f408523b63ec1bb9fbb52906aa5d8345c3c",
+  "sources": [
+    {
+      "project": "drone_cpp_server_client-main upload",
+      "path": "src/vision/bbox_tracker.cpp",
+      "sha256": "e4e51256563f45283070bf3160cdbb5e96186c174759aa3662cd0c6b333101ce"
+    },
+    {
+      "project": "drone_cpp_server_client-main upload",
+      "path": "src/policy/tracking_policy.cpp",
+      "sha256": "e13011684510e27a7915a0313b7805af13ba4cf4c7dd839d8c55ad2923279a3c"
+    },
+    {
+      "project": "drone_cpp_server_client-main upload",
+      "path": "src/policy/spacing_controller.cpp",
+      "sha256": "5b30725ebf0238c96e12b3754d6fd10e09028ea488d6aa880f013976a88414ab"
+    },
+    {
+      "project": "ATLASv2-main upload",
+      "path": "atlas_v2/enemy_drone/detector.py",
+      "sha256": "d3a37aa7efa6e6ba9f25d55ce7c499e9f883bd427a851e79c8ce8ca5dcc3fb82"
+    }
+  ],
+  "protocol_source": "DJI-MSDK-to-PC-main/MSDKRemote/app/src/main/java/com/msdkremote/livevideo/VideoServer.java",
+  "release": "0.2.0",
+  "changes": [
+    "DirectML/CoreML compute adapter, no CUDA",
+    "native-resolution scaling of tracking parameters",
+    "250-300ms fade and 300ms display expiry",
+    "frame-bound snapshot metadata",
+    "paired native-resolution MP4 recordings"
+  ]
+}

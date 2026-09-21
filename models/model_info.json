@@ -1,0 +1,24 @@
+{
+  "filename": "best.onnx",
+  "sha256": "20c8821eee5eae466023f6ecc7355f408523b63ec1bb9fbb52906aa5d8345c3c",
+  "input": [
+    1,
+    3,
+    640,
+    640
+  ],
+  "output": [
+    1,
+    5,
+    8400
+  ],
+  "class_names": {
+    "0": "drone"
+  },
+  "task": "detect",
+  "model_source": "User upload in this conversation",
+  "exporter": "Ultralytics 8.4.129",
+  "execution_provider": "CPUExecutionProvider",
+  "note": "A detected drone is not automatically identified as a unique NEO.",
+  "source_metadata_license": "AGPL-3.0 License (https://ultralytics.com/license)"
+}
