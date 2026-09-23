@@ -53,12 +53,26 @@ class DeterministicTrackingPolicy:
         self.state='SEARCH'; self.entered=0.; self.reason='waiting_first_detection'
         self.edge=''; self.last_id=None; self.hits=0; self.ever=False; self.last=Intent()
         self.last_measurement_time=None
+        self.transition_count=0; self.transition=None; self.current_edge=''
+        self.measurement_fresh=False; self.new_measurement=False
+        self.time_since_detection=math.inf
+
+    def transition_to(self,state,reason,now):
+        self.transition=None
+        if state!=self.state:
+            self.transition_count+=1
+            self.transition={'previous':self.state,'current':state,'reason':reason,
+                             'previous_state_age_ms':max(0.,now-self.entered)*1000.,
+                             'transition_count':self.transition_count}
+            self.state=state; self.entered=now
+        self.reason=reason
 
     def update(self,now,k,w,h,measurement_time,measurement_id,command,settings,abort=False):
         if measurement_time is not None and measurement_time>0 and (self.last_measurement_time is None or measurement_time>self.last_measurement_time):
             self.last_measurement_time=measurement_time
         age = math.inf if self.last_measurement_time is None else max(0,now-self.last_measurement_time)
         fresh = age<=.30; new = fresh and measurement_id is not None and measurement_id!=self.last_id
+        self.time_since_detection=age; self.measurement_fresh=fresh; self.new_measurement=new
         if new: self.last_id=measurement_id
         edge=[]
         if k.initialized:
@@ -66,16 +80,19 @@ class DeterministicTrackingPolicy:
             elif k.cx-k.width/2<=w*.04 and (k.vx/w<=-.03 or k.cx<=0): edge.append('left')
             if k.cy+k.height/2>=h*.96 and (k.vy/h>=.03 or k.cy>=h): edge.append('bottom')
             elif k.cy-k.height/2<=h*.04 and (k.vy/h<=-.03 or k.cy<=0): edge.append('top')
-        if edge: self.edge='+'.join(edge)
+        self.current_edge='+'.join(edge)
+        if edge: self.edge=self.current_edge
         if abort:
-            state,reason='ABORT_HOVER','stale_video_or_result'; self.hits=0
+            state,reason='ABORT_HOVER','safety_abort'; self.hits=0
         elif fresh:
             self.ever=True; self.last=command.bounded()
             if self.state=='TRACK': state,reason='TRACK','fresh_detection'
-            else:
-                self.hits=self.hits+int(new) if self.state=='REACQUIRE' else int(new)
+            elif self.state=='REACQUIRE':
+                self.hits+=int(new)
                 state='TRACK' if self.hits>=3 else 'REACQUIRE'
                 reason='reacquire_confirmed' if self.hits>=3 else 'reacquire_confirming'
+            else:
+                self.hits=int(new); state,reason='REACQUIRE','candidate_detection'
         elif not self.ever:
             state,reason='SEARCH','waiting_first_detection'; self.hits=0
         else:
@@ -84,8 +101,7 @@ class DeterministicTrackingPolicy:
             elif age<=.65: state,reason='COAST','short_detection_gap'
             elif age<=settings.search_timeout: state,reason='SEARCH','recovery_timeout_search'
             else: state,reason='ABORT_HOVER','target_lost_timeout'
-        if state!=self.state: self.entered=now
-        self.state=state; self.reason=reason
+        self.transition_to(state,reason,now)
         out=Intent()
         if state=='TRACK': out=command
         elif state=='REACQUIRE': out=Intent(clamp(command.yaw,-.25,.25),clamp(command.vertical,-.20,.20))

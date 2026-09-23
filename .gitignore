@@ -11,3 +11,4 @@ config.local.json
 *.log
 .DS_Store
 Thumbs.db
+back_up_vers/

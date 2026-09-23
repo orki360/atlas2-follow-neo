@@ -8,6 +8,7 @@ import socket
 import threading
 import time
 import av
+from .cadence import FrameRateGate
 
 
 @dataclass(frozen=True)
@@ -18,15 +19,22 @@ class Frame:
 
 
 class LatestValue:
-    def __init__(self): self.lock=threading.Lock(); self.value=None
+    def __init__(self):
+        self.lock=threading.Lock();self.condition=threading.Condition(self.lock)
+        self.value=None;self.version=0
     def set(self,value):
-        with self.lock: self.value=value
+        with self.condition:
+            self.value=value;self.version+=1;self.condition.notify_all()
     def get(self):
         with self.lock: return self.value
+    def wait_next(self,version,timeout):
+        with self.condition:
+            self.condition.wait_for(lambda:self.version!=version,timeout)
+            return self.value,self.version
 
 
 class VideoReceiver:
-    def __init__(self,host,port=9999,codec='h264',raw_path=None,on_event=None,on_frame=None):
+    def __init__(self,host,port=9999,codec='h264',raw_path=None,on_event=None,on_frame=None,processing_fps=30.):
         if int(port)!=9999:
             raise ValueError('This iteration accepts only the original video port 9999.')
         self.host=host; self.port=int(port); self.codec=codec; self.raw_path=raw_path
@@ -35,6 +43,18 @@ class VideoReceiver:
         self.frames=LatestValue(); self.stop_event=threading.Event()
         self.sock=None; self.thread=None; self.count=0; self.bytes=0; self.error=None
         self.state='IDLE'; self.started_at=None; self.last_frame_at=None
+        self.processing_fps=processing_fps;self.processed_count=0;self.sampled_out=0
+        self.sampler=FrameRateGate()
+
+    def _publish_decoded(self,decoded,stamp):
+        self.count+=1;self.last_frame_at=stamp;self.state='STREAMING'
+        # H264 reference frames still have to be decoded. Avoid BGR conversion,
+        # publication and recording work for frames outside the requested rate.
+        if not self.sampler.admit(stamp,self.processing_fps):
+            self.sampled_out+=1;return
+        frame=Frame(self.count,stamp,decoded.to_ndarray(format='bgr24'))
+        self.processed_count+=1
+        self.frames.set(frame);self.on_frame(frame)
 
     def start(self):
         if self.thread and self.thread.is_alive(): raise RuntimeError('Video receiver already active')
@@ -65,11 +85,7 @@ class VideoReceiver:
                     except av.FFmpegError as exc:
                         self.on_event('decode_warning',{'error':str(exc)}); continue
                     for decoded in frames:
-                        self.count+=1; self.last_frame_at=time.monotonic()
-                        frame=Frame(self.count,self.last_frame_at,decoded.to_ndarray(format='bgr24'))
-                        self.frames.set(frame)
-                        self.on_frame(frame)
-                        self.state='STREAMING'
+                        self._publish_decoded(decoded,time.monotonic())
                 if time.monotonic()-(self.last_frame_at or connected)>8:
                     raise TimeoutError('Bytes received but no decoded frames. Check codec selection.')
         except Exception as exc:

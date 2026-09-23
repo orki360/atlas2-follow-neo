@@ -14,6 +14,8 @@ from .detector import OnnxDroneDetector, DetectorSettings
 from .controller import FollowController
 from .recording import VideoRecorder
 from . import __version__
+from .prediction import continuation_threshold
+from .cadence import FrameRateGate
 
 
 class SessionLog:
@@ -63,7 +65,8 @@ class FollowSession:
              'flight_control':'explicit_manual_or_dance_enable_required',
              'timestamp_origin':'local_decoder_monotonic_not_camera_exposure'})
         raw_path=self.output/f'video.{codec}' if record_raw else None
-        self.receiver=VideoReceiver(host,codec=codec,raw_path=raw_path,on_event=self.log.write,on_frame=self._record_frame)
+        self.receiver=VideoReceiver(host,codec=codec,raw_path=raw_path,on_event=self.log.write,
+                                    on_frame=self._record_frame,processing_fps=self.settings.video_fps)
         self.inference_thread=threading.Thread(target=self._infer,name='neo-inference',daemon=True)
         self.control_thread=threading.Thread(target=self._control,name='follow-preview',daemon=True)
 
@@ -81,6 +84,7 @@ class FollowSession:
     def configure(self,settings):
         settings.validate()
         with self.settings_lock: self.settings=settings; self.generation+=1
+        self.receiver.processing_fps=settings.video_fps
         self.reset_event.set(); self.log.write('settings',{'settings':asdict(settings)})
 
     def reset(self):
@@ -111,29 +115,38 @@ class FollowSession:
                              'providers':detector.session.get_providers(),
                              'class_names':detector.class_names,'compute':detector.compute_info}
             self.log.write('model_ready',self.model_info)
-            last_id=0; next_due=0.
+            last_id=0;frame_version=0;sampler=FrameRateGate()
             while not self.stop_event.is_set():
+                frame,new_version=self.receiver.frames.wait_next(frame_version,.10)
+                if self.stop_event.is_set():break
+                if new_version==frame_version or frame is None:continue
+                self.inference_skips+=max(0,new_version-frame_version-1)
+                frame_version=new_version
                 with self.settings_lock: settings=self.settings; generation=self.generation
-                frame=self.receiver.frames.get(); now=time.monotonic()
-                if frame is None or frame.frame_id==last_id or now<next_due:
-                    self.stop_event.wait(.005); continue
-                self.inference_skips+=max(0,frame.frame_id-last_id-1); last_id=frame.frame_id
+                now=time.monotonic()
+                if frame.frame_id==last_id:continue
+                last_id=frame.frame_id
+                if settings.inference_fps<settings.video_fps and not sampler.admit(frame.decoded_at,settings.inference_fps):continue
                 if now-frame.decoded_at>settings.stale_seconds:
-                    self.stop_event.wait(.01); continue
-                detector.settings=DetectorSettings(confidence=settings.confidence,iou_threshold=settings.nms_iou)
+                    continue
+                detector.settings=DetectorSettings(confidence=continuation_threshold(settings.confidence),
+                                                   iou_threshold=settings.nms_iou)
                 result=detector.detect(frame.image)
                 result.update(frame=frame,completed_at=time.monotonic(),generation=generation)
                 with self.settings_lock:
                     if generation==self.generation: self.result.set(result)
                 self.inference_count+=1
-                next_due=now+1/settings.inference_fps
         except Exception as exc:
             self.model_error=str(exc); self.log.write('inference_error',{'error':str(exc)})
 
     def _control(self):
-        controller=FollowController(); last_id=0; last_state=None; last_log=0.
+        controller=FollowController(); last_id=0; last_state=None; last_log=0.;result_version=0
         try:
             while not self.stop_event.is_set():
+                # Wake as soon as inference completes, or tick for aging even
+                # without a result. No unconditional sleep after fresh work.
+                _,result_version=self.result.wait_next(result_version,1/60)
+                if self.stop_event.is_set():break
                 now=time.monotonic(); settings=self.get_settings()
                 if self.reset_event.is_set():
                     controller.reset(); self.reset_event.clear()
@@ -158,17 +171,20 @@ class FollowSession:
                 if fresh_result:
                     chosen=controller.tracker.accepted
                     self.analysis.set({'result':result,'selected_box':None if chosen is None else asdict(chosen.box),'decision':decision})
-                key=(decision['state'],decision['spacing_phase'],decision['stale'])
+                key=(decision['state'],decision['spacing_phase'],decision['stale'],decision['edge_search']['active'])
                 if fresh_result or key!=last_state or now-last_log>=.5:
                     payload={'frame_id':frame.frame_id,'decision':decision,
                              'decoded_frames':self.receiver.count,'inferences':self.inference_count,
+                             'processed_frames':self.receiver.processed_count,
+                             'sampled_out_frames':self.receiver.sampled_out,
                              'skipped_frames':self.inference_skips}
                     if result:
                         payload.update(result_frame_id=result['frame'].frame_id,
                           decoded_at=result['frame'].decoded_at,inference_ms=result['inference_ms'],
-                          preprocess_ms=result['preprocess_ms'],postprocess_ms=result['postprocess_ms'],detections=result['detections'])
+                          preprocess_ms=result['preprocess_ms'],postprocess_ms=result['postprocess_ms'],detections=result['detections'],
+                          result_ready_at=result['completed_at'],
+                          result_to_control_ms=max(0.,now-result['completed_at'])*1000)
                     self.log.write('observation',payload); last_state=key; last_log=now
-                self.stop_event.wait(1/60)
         except Exception as exc:
             self.model_error=str(exc); self.log.write('controller_error',{'error':str(exc)})
             self.decision.set({'state':'ERROR','reason':str(exc),'stale':True,'track_box':None,
@@ -182,5 +198,6 @@ class FollowSession:
         if recorder:
             recorder.wait(); self.log.write('recording_end',recorder.status())
         self.log.write('session_end',{'decoded_frames':self.receiver.count,'inferences':self.inference_count,
+                                     'processed_frames':self.receiver.processed_count,'sampled_out_frames':self.receiver.sampled_out,
                                      'log_dropped':self.log.dropped,'flight_commands_sent':self.flight_commands_sent})
         self.log.close()

@@ -66,7 +66,10 @@ class Settings:
     confidence: float = .25
     nms_iou: float = .45
     new_track_confidence: float = .45
-    inference_fps: float = 60.0
+    inference_fps: float = 30.0
+    video_fps: float = 30.0
+    edge_search_enabled: bool = True
+    edge_search_seconds: float = 1.0
     stale_seconds: float = .75
     reacquire_seconds: float = .75
     stop_width: float = .20
@@ -78,8 +81,11 @@ class Settings:
     follow_and_hold: bool = True
 
     def validate(self):
+        if not isinstance(self.edge_search_enabled,bool):
+            raise ValueError('edge_search_enabled must be a boolean')
         bounds = {'confidence':(.05,.95), 'nms_iou':(.05,.95),
-                  'new_track_confidence':(.05,.99), 'inference_fps':(1,60),
+                  'new_track_confidence':(.05,.99), 'inference_fps':(1,60), 'video_fps':(1,60),
+                  'edge_search_seconds':(.2,2),
                   'stale_seconds':(.1,2), 'reacquire_seconds':(.65,5),
                   'stop_width':(.01,.50), 'yaw_limit':(.1,1),
                   'vertical_limit':(.1,1), 'forward_limit':(0,1),
@@ -89,3 +95,13 @@ class Settings:
             if not math.isfinite(value) or not lo <= value <= hi:
                 raise ValueError(f'{name} must be between {lo} and {hi}')
         return self
+
+
+def settings_from_config(config):
+    values=asdict(Settings())
+    values.update({k:v for k,v in config.get('settings',{}).items() if k in values})
+    if config.get('schema_version',1)<2:values['reacquire_seconds']=.75
+    if config.get('schema_version',1)<4:
+        # Requested 30/30 migration, once; other tracking/axis values survive.
+        values.update(video_fps=30.,inference_fps=30.)
+    return Settings(**values).validate()

@@ -52,6 +52,19 @@ class TrackingTests(unittest.TestCase):
         cmd=p.update(15,k,1280,720,10.2,3,Intent(),s)
         self.assertEqual(p.state,'ABORT_HOVER'); self.assertEqual(cmd,Intent())
 
+    def test_cpp_fsm_transition_metadata_and_reacquire_hits(self):
+        p=DeterministicTrackingPolicy(); k=Kinematics(True,640,360,100,70,0,0); s=Settings()
+        p.update(10,k,1280,720,10,1,Intent(.2,.1,.1,.2),s)
+        self.assertEqual(p.state,'REACQUIRE'); self.assertEqual(p.reason,'candidate_detection')
+        self.assertEqual(p.hits,1); self.assertEqual(p.transition['previous'],'SEARCH')
+        self.assertEqual(p.transition['current'],'REACQUIRE')
+        p.update(10.05,k,1280,720,10,1,Intent(.2,.1,.1,.2),s)
+        self.assertEqual(p.hits,1); self.assertIsNone(p.transition)
+        p.update(10.1,k,1280,720,10.1,2,Intent(.2,.1,.1,.2),s)
+        p.update(10.2,k,1280,720,10.2,3,Intent(.2,.1,.1,.2),s)
+        self.assertEqual(p.state,'TRACK'); self.assertEqual(p.hits,3)
+        self.assertEqual(p.transition['transition_count'],2)
+
     def test_spacing_confirm_requires_distinct_measurement(self):
         p=VisualSpacingController(); s=Settings()
         def update(now,mid,mt):
@@ -59,6 +72,18 @@ class TrackingTests(unittest.TestCase):
         cmd,_=update(10,1,10); self.assertEqual(p.phase,'CONFIRM_STOP'); self.assertEqual(cmd,Intent())
         update(10.1,1,10); self.assertEqual(p.phase,'CONFIRM_STOP')
         update(10.11,2,10.11); self.assertEqual(p.phase,'VISUAL_HOLD')
+
+    def test_spacing_reports_cpp_terminal_edge_once(self):
+        p=VisualSpacingController(); s=replace(Settings(),follow_and_hold=False)
+        args=(True,True,False,False,False)
+        p.update(10,*args,1,10,0,.10,.10,0,0,Intent(forward=.2),s)
+        p.update(10.1,*args,2,10.1,0,.22,.22,0,0,Intent(forward=.2),s)
+        p.update(10.2,*args,3,10.2,0,.22,.22,0,0,Intent(forward=.2),s)
+        self.assertEqual(p.phase,'BRAKE'); self.assertTrue(p.brake_started)
+        p.update(10.7,*args,4,10.7,0,.22,.22,0,0,Intent(forward=.2),s)
+        self.assertEqual(p.phase,'SEQUENCE_DONE'); self.assertTrue(p.completed_now)
+        p.update(10.8,*args,5,10.8,0,.22,.22,0,0,Intent(forward=.2),s)
+        self.assertFalse(p.completed_now)
 
     def test_axis_reversal_brakes(self):
         c=SmartTrackingController()

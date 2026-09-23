@@ -3,6 +3,7 @@ from dataclasses import asdict, fields
 from pathlib import Path
 from collections import deque
 import json
+import math
 import os
 import socket
 import subprocess
@@ -13,11 +14,39 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import cv2
 from PIL import Image, ImageTk
-from .types import Settings
+from .types import Settings, settings_from_config
 from .session import FollowSession
 from .overlay import render_bundle
-from .manual import ManualControl, MOVEMENT_KEYS
+from .manual import ManualControl, MOVEMENT_KEYS, AXES, DEFAULT_AXIS_LIMITS
 from .control_status import control_indicator
+
+
+# Windows keeps these virtual-key codes stable even when the active keyboard
+# layout produces Hebrew characters. Tk's keysym changes with the layout.
+WINDOWS_PHYSICAL_KEYS={65:'a',68:'d',69:'e',70:'f',81:'q',82:'r',83:'s',87:'w',88:'x'}
+
+
+def normalized_event_key(event,platform=None):
+    key=str(getattr(event,'keysym','')).lower()
+    platform=sys.platform if platform is None else platform
+    keycode=getattr(event,'keycode',None)
+    if platform=='win32' and isinstance(keycode,int):
+        return WINDOWS_PHYSICAL_KEYS.get(keycode,key)
+    return key
+
+
+def safe_focus_widget(root):
+    """A ttk popdown exists in Tcl but is not a registered Python widget."""
+    try: return root.focus_get()
+    except KeyError:
+        try:
+            name=str(root.tk.call('focus'))
+            while name:
+                try: return root.nametowidget(name)
+                except KeyError: name=name.rsplit('.',1)[0]
+        except tk.TclError: pass
+    except tk.TclError: pass
+    return None
 
 
 class FollowLabWindow:
@@ -25,14 +54,15 @@ class FollowLabWindow:
         self.root=root; self.base=Path(base); self.session=None; self.stopping=False
         self.manual=None; self.pressed=set(); self.key_releases={}
         self.dance_rejection=''; self.last_control_indicator=None
-        self.dance_selected=False
+        self.dance_selected=False; self.dance_terminal_seen=False
+        self.closing=False; self.focus_check_id=None
         self.last_image=None; self.last_frame=None; self.last_meta=None; self.photo=None; self.draw_key=None
         self.rates=deque(maxlen=90); self.started=time.monotonic()
         self.config_path=self.base/'config.local.json'; cfg={}
         if self.config_path.exists():
             try: cfg=json.loads(self.config_path.read_text(encoding='utf-8'))
             except (OSError,ValueError): pass
-        self.root.title('ATLAS2 Follow NEO | Live Perception Lab v0.2.0')
+        self.root.title('ATLAS2 Follow NEO | Live Perception Lab v0.10.0 - Update 8')
         self.root.geometry('1440x880'); self.root.minsize(1200,760)
         self.root.configure(bg='#101820')
         self.root.protocol('WM_DELETE_WINDOW',self.close)
@@ -70,7 +100,7 @@ class FollowLabWindow:
         self.device=tk.IntVar(value=cfg.get('gpu_adapter',-1))
         self.device_picker=ttk.Spinbox(compute_bar,textvariable=self.device,from_=-1,to=31,width=4)
         self.device_picker.pack(side='left',padx=8)
-        ttk.Label(compute_bar,text='Native video size | measurement fade 250-300 ms',foreground='#8cbbb8').pack(side='left',padx=12)
+        ttk.Label(compute_bar,text='YOLO + Kalman | short prediction is marked separately',foreground='#8cbbb8').pack(side='left',padx=12)
 
         manual_bar=ttk.Frame(root,padding=(12,4)); manual_bar.pack(fill='x')
         self.control_bar=manual_bar
@@ -83,15 +113,32 @@ class FollowLabWindow:
         self.dance_button=ttk.Button(manual_bar,text='START DANCE',command=self.toggle_dance)
         self.dance_button.pack(side='left',padx=8)
         self.speed_bar=ttk.Frame(root,padding=(12,4)); self.speed_bar.pack(fill='x')
-        ttk.Label(self.speed_bar,text='Speed  0').pack(side='left')
-        self.speed=tk.DoubleVar(value=100.)
-        self.speed_label=tk.StringVar(value='100% / MAX')
-        self.speed_slider=ttk.Scale(self.speed_bar,from_=0,to=100,variable=self.speed,
-                                    command=self.change_speed,length=340)
-        self.speed_slider.pack(side='left',padx=10)
-        ttk.Label(self.speed_bar,text='MAX').pack(side='left')
-        ttk.Label(self.speed_bar,textvariable=self.speed_label,font=('Segoe UI',12,'bold')).pack(side='left',padx=12)
-        ttk.Label(self.speed_bar,text='Keyboard + Dance | 100% = configured command limits').pack(side='left')
+        ttk.Label(self.speed_bar,text='NORMAL AXIS LIMITS',foreground='#6ad5cb').pack(side='left',padx=(0,8))
+        stored_limits=cfg.get('axis_limits',{})
+        self.axis_limit_vars={}; self.axis_limit_labels={}; self.axis_entry_vars={}
+        axis_labels=(('Up / Down','vertical'),('Yaw L / R','yaw'),
+                     ('Forward / Back','forward'),('Side L / R','roll'))
+        for label,axis in axis_labels:
+            group=ttk.Frame(self.speed_bar); group.pack(side='left',padx=5)
+            value=max(0.,min(1.,float(stored_limits.get(axis,DEFAULT_AXIS_LIMITS[axis]))))*100
+            self.axis_limit_vars[axis]=tk.DoubleVar(value=value)
+            self.axis_entry_vars[axis]=tk.StringVar(value=f'{value:g}')
+            self.axis_limit_labels[axis]=tk.StringVar(value=f'{value:.1f}%')
+            ttk.Label(group,text=label).pack(anchor='w')
+            row=ttk.Frame(group); row.pack()
+            ttk.Scale(row,from_=0,to=100,variable=self.axis_limit_vars[axis],length=105,
+                      command=lambda new_value,selected=axis:self.change_axis_speed(selected,new_value)).pack(side='left')
+            exact=ttk.Spinbox(row,textvariable=self.axis_entry_vars[axis],from_=0,to=100,
+                              increment=.5,width=6,
+                              command=lambda selected=axis:self.change_axis_speed(
+                                  selected,self.axis_entry_vars[selected].get()))
+            exact.pack(side='left',padx=(4,0))
+            exact.bind('<Return>',lambda event,selected=axis:self.change_axis_speed(
+                selected,self.axis_entry_vars[selected].get()))
+            exact.bind('<FocusOut>',lambda event,selected=axis:self.change_axis_speed(
+                selected,self.axis_entry_vars[selected].get()))
+            ttk.Label(row,textvariable=self.axis_limit_labels[axis],width=7).pack(side='left',padx=(3,0))
+        ttk.Label(self.speed_bar,text='Normal caps\nEdge search: yaw 100%',foreground='#8cbbb8').pack(side='left',padx=8)
         self.manual_status=tk.StringVar(value='Keyboard disconnected | Start Control Server on phone')
         ttk.Label(root,textvariable=self.manual_status,padding=(12,2),foreground='#6ad5cb').pack(fill='x')
         self.dance_status=tk.StringVar(value='Dance off | Take off manually, enable control, then Start NEO Dance')
@@ -99,7 +146,7 @@ class FollowLabWindow:
                                      bg='#354452',fg='white',pady=8)
         self.control_banner.pack(fill='x',padx=12,pady=(4,0))
         ttk.Label(root,textvariable=self.dance_status,padding=(12,4),foreground='#d9b56c').pack(fill='x')
-        ttk.Label(root,text='W/S: up/down   A/D: yaw   Arrows: forward/back/left/right   X: close | Click video to use keyboard',padding=(12,2)).pack(fill='x')
+        ttk.Label(root,text='W/S: up/down   A/D: yaw   Arrows: forward/back/left/right   Timed edge search overrides only yaw to 100%',padding=(12,2)).pack(fill='x')
         self.root.bind('<KeyPress>',self.key_press)
         self.root.bind('<KeyRelease>',self.key_release)
         self.root.bind('<FocusOut>',self.focus_out)
@@ -107,6 +154,7 @@ class FollowLabWindow:
         body.columnconfigure(0,weight=1); body.rowconfigure(0,weight=1)
         left=ttk.Frame(body); left.grid(row=0,column=0,sticky='nsew',padx=(0,12))
         viewbar=ttk.Frame(left); viewbar.pack(fill='x',pady=(0,8))
+        self.view_bar=viewbar
         ttk.Label(viewbar,text='Display').pack(side='left')
         self.view=tk.StringVar(value='Analyzed frame')
         ttk.Combobox(viewbar,textvariable=self.view,values=['Analyzed frame','Live prediction'],state='readonly',width=19).pack(side='left',padx=8)
@@ -143,18 +191,16 @@ class FollowLabWindow:
         ttk.Label(status,text='Tracking intent (sent only in Dance)',foreground='#d9b56c').pack(anchor='w')
         ttk.Label(status,textvariable=self.intent,font=('Consolas',11)).pack(anchor='w',pady=5)
         settings=ttk.LabelFrame(right,text='Detection and tracking',padding=10); settings.pack(fill='x',pady=10)
-        values=asdict(Settings()); values.update({k:v for k,v in cfg.get('settings',{}).items() if k in values})
-        if cfg.get('schema_version',1)<2:
-            values['reacquire_seconds']=.75
-            if values['inference_fps']==15: values['inference_fps']=60
+        values=asdict(settings_from_config(cfg))
         self.loaded_values=values
         self.vars={}
-        controls=[('Confidence','confidence',.05,.95,.05),('New track confidence','new_track_confidence',.05,.99,.05),
-                  ('NMS IoU','nms_iou',.05,.95,.05),('Inference FPS cap','inference_fps',1,60,1),
+        controls=[('YOLO acquire confidence','confidence',.05,.95,.05),('New track confidence','new_track_confidence',.05,.99,.05),
+                  ('NMS IoU','nms_iou',.05,.95,.05),('Video processing FPS','video_fps',1,60,1),
+                  ('Inference target FPS','inference_fps',1,60,1),
                   ('Result stale (seconds)','stale_seconds',.1,2,.05),
                   ('Stop BBOX width %','stop_width',1,50,2),('Yaw limit %','yaw_limit',10,100,5),
                   ('Vertical limit %','vertical_limit',10,100,5),('Forward limit %','forward_limit',0,100,5),
-                  ('Search yaw %','search_yaw',0,100,5)]
+                  ('Edge search max seconds','edge_search_seconds',.2,2,.1)]
         self.percent={'stop_width','yaw_limit','vertical_limit','forward_limit','search_yaw'}
         for row,(label,key,lo,hi,step) in enumerate(controls):
             ttk.Label(settings,text=label).grid(row=row,column=0,sticky='w',pady=3)
@@ -162,15 +208,19 @@ class FollowLabWindow:
             ttk.Spinbox(settings,textvariable=self.vars[key],from_=lo,to=hi,increment=step,width=7).grid(row=row,column=1,padx=(8,0))
         self.hold=tk.BooleanVar(value=bool(values['follow_and_hold']))
         ttk.Checkbutton(settings,text='Follow & Hold',variable=self.hold).grid(row=len(controls),columnspan=2,sticky='w',pady=6)
-        ttk.Button(settings,text='Apply + reset tracking',command=self.apply).grid(row=len(controls)+1,columnspan=2,sticky='ew')
+        self.edge_search_on=tk.BooleanVar(value=bool(values['edge_search_enabled']))
+        ttk.Checkbutton(settings,text='Edge-exit search: yaw 100%',variable=self.edge_search_on).grid(row=len(controls)+1,columnspan=2,sticky='w',pady=6)
+        ttk.Button(settings,text='Apply + reset tracking',command=self.apply).grid(row=len(controls)+2,columnspan=2,sticky='ew')
         self.settings_note=tk.StringVar(value='Settings ready')
-        ttk.Label(settings,textvariable=self.settings_note,foreground='#d9b56c',wraplength=285).grid(row=len(controls)+2,columnspan=2,sticky='w',pady=6)
+        ttk.Label(settings,textvariable=self.settings_note,foreground='#d9b56c',wraplength=285).grid(row=len(controls)+3,columnspan=2,sticky='w',pady=6)
+        ttk.Label(settings,text='Confirmed targets can briefly use a lower confidence\nwhen position and size agree with the track.',
+                  foreground='#8cbbb8',wraplength=285).grid(row=len(controls)+4,columnspan=2,sticky='w')
         ttk.Button(right,text='Reset target / spacing',command=self.reset).pack(fill='x',pady=2)
         ttk.Button(right,text='Open session logs',command=self.open_logs).pack(fill='x',pady=2)
         self.notice=tk.StringVar(value='Enter the IP shown in MSDKRemote. Start its Video Server first.')
         ttk.Label(root,textvariable=self.notice,wraplength=1250,padding=10,foreground='#d9b56c').pack(side='bottom',fill='x',before=body)
         self.settings=Settings(**self.loaded_values)
-        for var in list(self.vars.values())+[self.hold]: var.trace_add('write',self.mark_dirty)
+        for var in list(self.vars.values())+[self.hold,self.edge_search_on]: var.trace_add('write',self.mark_dirty)
         self.compute.trace_add('write',lambda *a:self.notice.set('Compute changes take effect on the next Connect.'))
         self.root.after(50,self.refresh)
 
@@ -178,11 +228,13 @@ class FollowLabWindow:
         data=asdict(self.settings)
         for key,var in self.vars.items(): data[key]=float(var.get())/(100 if key in self.percent else 1)
         data['follow_and_hold']=self.hold.get()
+        data['edge_search_enabled']=self.edge_search_on.get()
         return Settings(**data).validate()
 
     def save_config(self):
-        data={'schema_version':2,'phone_ip':self.ip.get().strip(),'codec':self.codec.get(),
-              'compute':self.compute.get(),'gpu_adapter':self.device.get(),'settings':asdict(self.settings)}
+        data={'schema_version':4,'phone_ip':self.ip.get().strip(),'codec':self.codec.get(),
+              'compute':self.compute.get(),'gpu_adapter':self.device.get(),'settings':asdict(self.settings),
+              'axis_limits':self.current_axis_limits()}
         tmp=self.config_path.with_suffix('.tmp')
         tmp.write_text(json.dumps(data,indent=2),encoding='utf-8'); tmp.replace(self.config_path)
 
@@ -227,6 +279,15 @@ class FollowLabWindow:
         self.root.after(50,finished)
 
     def close(self):
+        self.closing=True
+        pending=getattr(self,'focus_check_id',None)
+        if pending:
+            try: self.root.after_cancel(pending)
+            except tk.TclError: pass
+            self.focus_check_id=None
+        if hasattr(self,'settings'):
+            try: self.save_config()
+            except (OSError,ValueError,tk.TclError): pass
         self.stop_manual()
         def finish():
             if self.manual and self.manual.thread.is_alive():
@@ -244,8 +305,8 @@ class FollowLabWindow:
             except OSError: socket.inet_pton(socket.AF_INET6,host)
         except OSError:
             self.notice.set('Enter a numeric Phone IP before connecting keyboard.'); return
-        self.manual=ManualControl(host,on_event=self.log_control)
-        self.manual.set_speed(self.speed.get()/100.)
+        self.manual=ManualControl(host,on_event=self.log_control,decision_provider=self.dance_decision)
+        self.manual.set_axis_limits(self.current_axis_limits())
         if self.dance_selected: self.manual.start_dance()
         self.manual.start()
         self.canvas.focus_set()
@@ -257,6 +318,7 @@ class FollowLabWindow:
     def toggle_dance(self):
         self.dance_rejection=''
         self.dance_selected=not self.dance_selected
+        self.dance_terminal_seen=False
         self.pressed.clear()
         if self.dance_selected:
             if self.session: self.session.reset()
@@ -270,11 +332,50 @@ class FollowLabWindow:
         self.canvas.focus_set()
         self.show_control_indicator()
 
-    def change_speed(self,value):
-        percent=max(0.,min(100.,float(value)))
-        self.speed_label.set(f'{percent:.0f}%' + (' / MAX' if percent>=100 else ' / STOP' if percent==0 else ''))
-        if self.manual: self.manual.set_speed(percent/100.)
-        self.log_control('speed_changed',{'percent':percent})
+    def finish_terminal_dance(self,decision):
+        """Mirror C++ stopFollow(): terminal spacing ends this activation."""
+        if (not decision or not self.dance_selected or not self.manual
+                or self.manual.mode!='DANCE' or self.dance_terminal_seen):
+            return False
+        if decision.get('spacing_phase') not in ('STOPPED','SEQUENCE_DONE'):
+            return False
+        prediction_time=decision.get('prediction_time')
+        if not isinstance(prediction_time,(int,float)) or prediction_time<=self.manual.dance_started:
+            return False
+        self.dance_terminal_seen=True; self.dance_selected=False; self.pressed.clear()
+        self.manual.manual_mode()
+        reason=decision.get('spacing_reason') or decision.get('reason') or 'terminal_stop'
+        self.notice.set(f'Dance ended: {reason}. Press START DANCE to begin a new deterministic run.')
+        self.log_control('dance_terminal_stop',{
+            'reason':reason,'spacing_phase':decision.get('spacing_phase'),
+            'policy_state':decision.get('state'),'prediction_time':prediction_time})
+        self.root.bell()
+        return True
+
+    def current_axis_limits(self):
+        return {axis:max(0.,min(100.,float(self.axis_limit_vars[axis].get())))/100.
+                for axis in AXES}
+
+    def change_axis_speed(self,axis,value):
+        try:
+            percent=float(value)
+            if not math.isfinite(percent): raise ValueError('not finite')
+        except (TypeError,ValueError,tk.TclError):
+            percent=(self.manual.axis_limits[axis]*100 if self.manual
+                     else DEFAULT_AXIS_LIMITS[axis]*100)
+            self.axis_limit_vars[axis].set(percent)
+            if axis in getattr(self,'axis_entry_vars',{}): self.axis_entry_vars[axis].set(f'{percent:g}')
+            self.axis_limit_labels[axis].set(f'{percent:.1f}%')
+            self.notice.set(f'Invalid {axis} speed. Previous value restored.')
+            return
+        percent=max(0.,min(100.,percent))
+        self.axis_limit_vars[axis].set(percent)
+        if axis in getattr(self,'axis_entry_vars',{}): self.axis_entry_vars[axis].set(f'{percent:g}')
+        self.axis_limit_labels[axis].set(f'{percent:.1f}%')
+        limits=self.current_axis_limits()
+        if self.manual: self.manual.set_axis_limits(limits)
+        self.log_control('axis_speed_changed',{'axis':axis,'percent':percent,
+                                                'axis_limits':limits})
 
     def reject_dance(self,reason):
         self.dance_rejection=reason
@@ -325,7 +426,7 @@ class FollowLabWindow:
         self.canvas.focus_set()
 
     def key_press(self,event):
-        key=event.keysym.lower()
+        key=normalized_event_key(event)
         if key in ('q','escape'):
             self.release_manual(); return 'break'
         if event.widget.winfo_class() not in ('Canvas','Tk'):
@@ -344,7 +445,7 @@ class FollowLabWindow:
         if key in MOVEMENT_KEYS or key in ('e','f','r','x'): return 'break'
 
     def key_release(self,event):
-        key=event.keysym.lower()
+        key=normalized_event_key(event)
         def released():
             self.key_releases.pop(key,None); self.pressed.discard(key)
             if self.manual: self.manual.update(self.pressed & MOVEMENT_KEYS)
@@ -356,19 +457,32 @@ class FollowLabWindow:
         # Tk buttons take focus on mouse-down, BEFORE their command on mouse-up.
         # Keep authority across the flight toolbar so clicking Dance can run.
         def check():
-            focused=self.root.focus_get()
+            self.focus_check_id=None
+            if getattr(self,'closing',False): return
+            focused=safe_focus_widget(self.root)
             if focused is self.canvas: return
             toolbar=getattr(self,'control_bar',None)
             speedbar=getattr(self,'speed_bar',None)
-            if focused is not None and ((toolbar is not None and focused.master is toolbar)
-                                        or (speedbar is not None and focused.master is speedbar)):
+            viewbar=getattr(self,'view_bar',None)
+            def inside(widget,ancestor):
+                while widget is not None:
+                    if widget is ancestor: return True
+                    widget=getattr(widget,'master',None)
+                return False
+            if focused is not None and (inside(focused,toolbar) or inside(focused,speedbar) or inside(focused,viewbar)):
                 self.pressed.clear()
                 if self.manual: self.manual.update(set())
                 return
             if self.manual and self.manual.wanted:
                 self.log_control('control_focus_release',{'reason':'window_or_settings_focus'})
             self.release_manual()
-        self.root.after_idle(check)
+        if getattr(self,'closing',False): return
+        pending=getattr(self,'focus_check_id',None)
+        if pending:
+            try: self.root.after_cancel(pending)
+            except tk.TclError: pass
+        try: self.focus_check_id=self.root.after_idle(check)
+        except tk.TclError: pass
 
     def apply(self):
         try:
@@ -408,14 +522,16 @@ class FollowLabWindow:
     def refresh(self):
         if self.manual:
             decision=self.dance_decision()
+            if self.finish_terminal_dance(decision): decision=None
             self.manual.update(self.pressed & MOVEMENT_KEYS,decision)
             self.manual_status.set(self.manual.status)
             self.manual_button.configure(text='Disconnect keyboard' if self.manual.thread.is_alive() else 'Connect keyboard')
         s=self.session
         if s and not self.stopping:
             now=time.monotonic(); frame=s.receiver.frames.get(); analysis=s.analysis.get(); decision=s.decision.get()
-            self.rates.append((now,s.receiver.count,s.inference_count))
-            elapsed=max(.01,now-self.rates[0][0]); video_fps=(s.receiver.count-self.rates[0][1])/elapsed
+            self.rates.append((now,s.receiver.count,s.inference_count,s.receiver.processed_count))
+            elapsed=max(.01,now-self.rates[0][0]); source_fps=(s.receiver.count-self.rates[0][1])/elapsed
+            video_fps=(s.receiver.processed_count-self.rates[0][3])/elapsed
             inference_fps=(s.inference_count-self.rates[0][2])/elapsed
             self.state.set(s.receiver.state if not decision else decision['state'])
             if s.receiver.error: self.state.set('VIDEO ERROR'); self.notice.set(s.receiver.error+' Disconnect, then retry.')
@@ -429,6 +545,8 @@ class FollowLabWindow:
                 if compute.get('fallback_reason'): compute_label+=' (GPU fallback)'
                 self.metrics.set(f"Model: {compute_label}\n"
                     f"YOLO: {inference} | target age: {age_text}\n"
+                    f"Track source: {decision.get('track_support','--')}\n"
+                    +('Short forward continuation\n' if decision.get('prediction_forward_allowed') else '')+
                     f"Spacing: {decision.get('spacing_phase','--')}\n"
                     f"Width: {100*decision.get('raw_width_ratio',0):.1f}%\n"
                     f"{decision.get('reason','')}\n{decision.get('spacing_reason','')}"
@@ -451,7 +569,7 @@ class FollowLabWindow:
                 self.draw_key=key
             decode_age='--' if frame is None else f'{(now-frame.decoded_at)*1000:.0f} ms'
             size='--' if frame is None else f'{frame.image.shape[1]}x{frame.image.shape[0]}'
-            self.video_stats.set(f'{size} | Video {video_fps:.1f} FPS   |   YOLO {inference_fps:.1f} FPS   |   Decode age {decode_age}   |   Skipped for freshness {s.inference_skips}')
+            self.video_stats.set(f'{size} | Input {source_fps:.1f} FPS | Processed video {video_fps:.1f} FPS | YOLO {inference_fps:.1f} FPS | Decode age {decode_age} | Unanalyzed selected frames {s.inference_skips}')
         self.show_control_indicator()
         recorder=s.recorder if s else None
         recording=recorder.status() if recorder else None
