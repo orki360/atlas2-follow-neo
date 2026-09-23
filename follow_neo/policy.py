@@ -49,73 +49,69 @@ class SmartTrackingController:
 
 
 class DeterministicTrackingPolicy:
+    """Recoverable target states; only real measurements can confirm a track."""
     def __init__(self):
-        self.state='SEARCH'; self.entered=0.; self.reason='waiting_first_detection'
-        self.edge=''; self.last_id=None; self.hits=0; self.ever=False; self.last=Intent()
-        self.last_measurement_time=None
-        self.transition_count=0; self.transition=None; self.current_edge=''
-        self.measurement_fresh=False; self.new_measurement=False
-        self.time_since_detection=math.inf
+        self.state='WAIT_TARGET';self.entered=0.;self.reason='waiting_first_detection'
+        self.edge='';self.current_edge='';self.last_id=None;self.hits=0;self.ever=False
+        self.last=Intent();self.last_measurement_time=None;self.reacquire_since=None
+        self.transition_count=0;self.transition=None
+        self.measurement_fresh=False;self.new_measurement=False;self.time_since_detection=math.inf
 
     def transition_to(self,state,reason,now):
         self.transition=None
         if state!=self.state:
             self.transition_count+=1
-            self.transition={'previous':self.state,'current':state,'reason':reason,
-                             'previous_state_age_ms':max(0.,now-self.entered)*1000.,
-                             'transition_count':self.transition_count}
-            self.state=state; self.entered=now
+            self.transition=dict(previous=self.state,current=state,reason=reason,
+                previous_state_age_ms=max(0.,now-self.entered)*1000.,transition_count=self.transition_count)
+            self.state=state;self.entered=now
         self.reason=reason
 
-    def update(self,now,k,w,h,measurement_time,measurement_id,command,settings,abort=False):
-        if measurement_time is not None and measurement_time>0 and (self.last_measurement_time is None or measurement_time>self.last_measurement_time):
-            self.last_measurement_time=measurement_time
-        age = math.inf if self.last_measurement_time is None else max(0,now-self.last_measurement_time)
-        fresh = age<=.30; new = fresh and measurement_id is not None and measurement_id!=self.last_id
-        self.time_since_detection=age; self.measurement_fresh=fresh; self.new_measurement=new
-        if new: self.last_id=measurement_id
-        edge=[]
-        if k.initialized:
-            if k.cx+k.width/2>=w*.96 and (k.vx/w>=.03 or k.cx>=w): edge.append('right')
-            elif k.cx-k.width/2<=w*.04 and (k.vx/w<=-.03 or k.cx<=0): edge.append('left')
-            if k.cy+k.height/2>=h*.96 and (k.vy/h>=.03 or k.cy>=h): edge.append('bottom')
-            elif k.cy-k.height/2<=h*.04 and (k.vy/h<=-.03 or k.cy<=0): edge.append('top')
-        self.current_edge='+'.join(edge)
-        if edge: self.edge=self.current_edge
+    def update(self,now,k,w,h,measurement_time,measurement_id,command,settings,abort=False,
+               accepted=True,search=None):
+        previous_time=self.last_measurement_time
+        if measurement_time is not None and math.isfinite(measurement_time) and measurement_time<=now:
+            if previous_time is None or measurement_time>previous_time:self.last_measurement_time=measurement_time
+        age=math.inf if self.last_measurement_time is None else max(0.,now-self.last_measurement_time)
+        fresh=accepted and age<=.25 and measurement_id is not None
+        new=fresh and measurement_id!=self.last_id
+        self.time_since_detection=age;self.measurement_fresh=fresh;self.new_measurement=new
+        if new:self.last_id=measurement_id
+        self.current_edge=''
+        if search and search.get('candidate_direction'):
+            self.current_edge='right' if search['candidate_direction']>0 else 'left'
+            self.edge=self.current_edge
         if abort:
-            state,reason='ABORT_HOVER','safety_abort'; self.hits=0
+            state,reason='WAIT_VIDEO','video_or_result_unavailable';self.hits=0;self.reacquire_since=None
         elif fresh:
-            self.ever=True; self.last=command.bounded()
-            if self.state=='TRACK': state,reason='TRACK','fresh_detection'
-            elif self.state=='REACQUIRE':
-                self.hits+=int(new)
-                state='TRACK' if self.hits>=3 else 'REACQUIRE'
-                reason='reacquire_confirmed' if self.hits>=3 else 'reacquire_confirming'
+            self.ever=True
+            short_return=(self.state=='COAST' and previous_time is not None
+                          and measurement_time-previous_time<=.25)
+            if self.state=='TRACK' or short_return:
+                state,reason='TRACK','fresh_detection';self.hits=max(3,self.hits)
             else:
-                self.hits=int(new); state,reason='REACQUIRE','candidate_detection'
+                if self.state!='REACQUIRE':self.hits=0;self.reacquire_since=None
+                if new:
+                    self.hits+=1
+                    if self.reacquire_since is None:self.reacquire_since=measurement_time
+                ready=(self.hits>=3 and self.reacquire_since is not None
+                       and measurement_time-self.reacquire_since>=.06)
+                state='TRACK' if ready else 'REACQUIRE'
+                reason='reacquire_confirmed' if ready else 'reacquire_confirming'
+            if state=='TRACK':self.last=command.bounded()
+        elif search and search.get('active'):
+            state,reason='DIRECTIONAL_SEARCH','directional_search';self.hits=0
+        elif search and search.get('consumed'):
+            state,reason='HOVER_WAIT',search['reason'];self.hits=0
         elif not self.ever:
-            state,reason='SEARCH','waiting_first_detection'; self.hits=0
+            state,reason='WAIT_TARGET','waiting_first_detection';self.hits=0
+        elif age<=.65:
+            state,reason='COAST','short_detection_gap';self.hits=0
         else:
+            state='HOVER_WAIT';reason=(search or {}).get('reason','target_lost')
+            if age>=settings.edge_search_seconds:reason='search_timeout'
             self.hits=0
-            if edge and age<=1.60: state,reason='EDGE_RECOVERY','predicted_edge_exit'
-            elif age<=.65: state,reason='COAST','short_detection_gap'
-            elif age<=settings.search_timeout: state,reason='SEARCH','recovery_timeout_search'
-            else: state,reason='ABORT_HOVER','target_lost_timeout'
         self.transition_to(state,reason,now)
-        out=Intent()
-        if state=='TRACK': out=command
-        elif state=='REACQUIRE': out=Intent(clamp(command.yaw,-.25,.25),clamp(command.vertical,-.20,.20))
-        elif state=='COAST':
-            scale=1-.65*clamp((age-.30)/.35,0,1)
-            out=Intent(self.last.yaw*scale,self.last.vertical*scale,self.last.roll*scale*.55,min(max(0,self.last.forward),.25)*scale)
-        elif state=='EDGE_RECOVERY':
-            decay=max(.35,1-.65*(now-self.entered)/1.6)
-            roll=.18 if 'right' in self.edge else -.18 if 'left' in self.edge else 0
-            out=Intent(clamp(.70*(k.cx-w/2)/(w/2),-.65,.65)*decay,
-                       clamp(-.55*(k.cy-h/2)/(h/2),-.40,.40)*decay,roll*decay,0)
-        elif state=='SEARCH' and self.ever:
-            direction=1 if 'right' in self.edge else -1 if 'left' in self.edge else math.copysign(1,self.last.yaw or 1)
-            phase=int(max(0,now-self.entered)/.65)
-            magnitude=settings.search_yaw*(.65+.35*clamp((phase//2)/3,0,1))
-            out=Intent(direction*(1 if phase%2==0 else -1)*magnitude)
-        return out.bounded()
+        if state=='TRACK':return command.bounded()
+        if state=='REACQUIRE':return Intent(clamp(command.yaw,-.25,.25),clamp(command.vertical,-.20,.20))
+        if state=='DIRECTIONAL_SEARCH':return Intent(yaw=float(search['direction']))
+        return Intent()

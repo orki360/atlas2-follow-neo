@@ -46,92 +46,64 @@ class FollowController:
                 source_time,frame_id,settings)
         return accepted
 
-    def tick(self,now,width,height,video_time,settings):
-        if self.frame_size is not None and self.frame_size!=(width,height): self.reset()
-        t=self.tracker; k=t.snapshot(now); quality=t.quality()
+    def tick(self,now,width,height,video_time,settings,heading=None):
+        if self.frame_size is not None and self.frame_size!=(width,height):self.reset()
+        t=self.tracker;k=t.snapshot(now);quality=t.quality();uncertainty=t.uncertainty(now)
         mtime=t.measurement_time
-        age=math.inf if mtime is None else max(0,now-mtime)
-        stream_stale=video_time is None or now-video_time>settings.stale_seconds
-        result_stale=self.result_time is None or now-self.result_time>settings.stale_seconds
-        raw,ex,ey=self.smart.compute(k,width,height,age,self.rejected,now,settings)
-        current_center=replace(raw)
-        # Match the C++ 250-300ms measurement fade; recovery stays separate.
-        measurement_scale=max(0.,min(1.,(.300-age)/.050))
-        raw.yaw*=measurement_scale; raw.vertical*=measurement_scale
-        if age>.300: raw=Intent()
+        age=math.inf if mtime is None else max(0.,now-mtime)
+        stream_stale=video_time is None or not 0<=now-video_time<=settings.stale_seconds
+        result_stale=self.result_time is None or not 0<=now-self.result_time<=settings.stale_seconds
+        stale=stream_stale or result_stale
+        real_fresh=not self.rejected and age<=.25
+        raw,ex,ey=self.smart.compute(k,width,height,age,not real_fresh,now,settings)
         raw.forward*=settings.forward_limit
-        # Unconfirmed candidates are not supplied as accepted policy observations.
+        current_center=replace(raw);measurement_scale=1. if real_fresh else 0.
+        search=self.edge_search.update(now,self.missing_detection,stale,
+                    self.spacing.phase,self.spacing.close,settings,heading)
         cmd=self.policy.update(now,k,width,height,mtime if t.confirmed else None,
-                               t.measurement_id if t.confirmed else None,raw,settings,
-                               abort=stream_stale or result_stale)
+                    t.measurement_id if t.confirmed else None,raw,settings,
+                    abort=stale,accepted=real_fresh,search=search)
         box=k.box
         measured_box=None if self.last_accepted is None else self.last_accepted.box
         clipped=measured_box is not None and (measured_box.x1<=.02*width or measured_box.y1<=.02*height
                     or measured_box.x2>=.98*width or measured_box.y2>=.98*height)
-        raw_width=0 if self.last_accepted is None else self.last_accepted.box.width/width
-        far=(not clipped and not self.spacing.close and self.spacing.phase=='APPROACH'
-             and max(raw_width,k.width/width)<settings.stop_width*.60)
-        if not self.rejected and t.confirmed and self.policy.state=='TRACK' and far:
-            self.last_center_command=replace(raw)
-        elif (stream_stale or result_stale or not far or not t.confirmed
-              or self.rejected and not self.missing_detection):
-            self.last_center_command=None
-        # Bounded recovery for an empty result, never a competing detection.
-        coast=(settings.follow_and_hold and self.missing_detection and self.rejected
-               and t.confirmed and 0<=age<=COAST_SECONDS and far
-               and not stream_stale and not result_stale
-               and self.policy.state in ('TRACK','COAST','EDGE_RECOVERY')
-               and self.last_center_command is not None
-               and box.x1>.02*width and box.x2<.98*width
-               and box.y1>.02*height and box.y2<.98*height
-               and abs(k.vx)/width<.8 and abs(k.vy)/height<.8)
-        # Extend ONLY an already positive forward command on a consistent,
-        # distant, centered trajectory. No new motion/direction is invented.
-        forward_coast=(coast and quality['stable'] and age<STABLE_FORWARD_SECONDS
-                       and self.last_center_command.forward>0
-                       and abs(ex)<.55 and abs(ey)<.55)
-        # Bridge ONLY an empty detection result on an already confirmed,
-        # distant track, never a rejected competing detection or close target.
-        # The real measurement timestamp is unchanged and expires at 250 ms.
-        brief_gap=(settings.follow_and_hold and self.missing_detection and self.rejected
-                   and t.confirmed and self.policy.state=='TRACK' and age<=.25
-                   and not stream_stale and not result_stale and not clipped
-                   and not self.spacing.close and self.spacing.phase=='APPROACH'
-                   and max(raw_width,k.width/width)<settings.stop_width*.60
-                   and abs(ex)<.65 and abs(ey)<.65 and self.last_track_command is not None)
-        if brief_gap:
-            gap_scale=max(0.,min(1.,(.25-age)/.13))
-            cmd=Intent(*(v*gap_scale for v in asdict(self.last_track_command).values()))
-        elif self.rejected or self.policy.state!='TRACK':
-            self.last_track_command=None
-        elif self.spacing.phase=='APPROACH' and not self.spacing.close:
-            self.last_track_command=replace(cmd)
+        raw_width=0. if measured_box is None else measured_box.width/width
         cmd,projected=self.spacing.update(now,self.policy.state=='TRACK',t.confirmed,
-                  self.rejected and not brief_gap,clipped,self.policy.reason=='target_lost_timeout',
-                  t.measurement_id,mtime,age,raw_width,k.width/width,ex,ey,cmd,settings)
-        if self.spacing.phase!='APPROACH' or self.spacing.close:
-            self.last_track_command=None
-            self.last_center_command=None; coast=False; forward_coast=False
+                    not real_fresh,clipped,self.policy.reason=='search_timeout',
+                    t.measurement_id,mtime,age,raw_width,k.width/width,ex,ey,cmd,settings)
+        if real_fresh and t.confirmed and self.policy.state=='TRACK':
+            self.last_center_command=replace(cmd)
+        previous=self.last_center_command
+        std=uncertainty.get('position_std_px')
+        forecast_ok=std is not None and std[0]<width*.12 and std[1]<height*.12
+        coast=(settings.follow_and_hold and self.missing_detection and not real_fresh
+               and t.confirmed and age<=COAST_SECONDS and not stale
+               and self.policy.state=='COAST' and previous is not None and forecast_ok)
+        forward_coast=False;brief_gap=False
         if coast:
-            previous=self.last_center_command
             def centering(old,current,limit):
-                # Never invent a reversal during an unobserved trajectory.
                 return math.copysign(min(abs(old),abs(current),limit)*fade(age),old) if old*current>0 else 0.
-            cmd.yaw=centering(previous.yaw,current_center.yaw,COAST_YAW*settings.yaw_limit)
-            cmd.vertical=centering(previous.vertical,current_center.vertical,COAST_VERTICAL*settings.vertical_limit)
-            if not brief_gap: cmd.forward=cmd.roll=0.
-            if forward_coast:
-                # Spacing still runs on real measurements above. Extension
-                # cannot override a stop, close guard, or threshold prediction.
-                if projected<settings.stop_width*.60:
-                    cmd.forward=max(0,previous.forward)*forward_fade(age)
-                else: forward_coast=False; cmd.forward=0.
-        if stream_stale or result_stale: cmd=Intent()
-        search=self.edge_search.update(now,self.missing_detection,stream_stale or result_stale,
-                                       self.spacing.phase,self.spacing.close,settings)
+            cmd=Intent(centering(previous.yaw,current_center.yaw,COAST_YAW*settings.yaw_limit),
+                       centering(previous.vertical,current_center.vertical,COAST_VERTICAL*settings.vertical_limit))
+            forward_coast=(quality['stable'] and age<STABLE_FORWARD_SECONDS
+                  and not self.spacing.close and not clipped and self.spacing.phase=='APPROACH'
+                  and projected<settings.stop_width*.90 and previous.forward>0
+                  and abs(ex)<.55 and abs(ey)<.55)
+            if forward_coast:cmd.forward=previous.forward*forward_fade(age)
+            brief_gap=forward_coast and age<=.25
         if search['active']:
-            cmd=Intent(yaw=float(search['direction']))
-            coast=forward_coast=brief_gap=False
+            cmd=Intent(yaw=float(search['direction']));coast=forward_coast=brief_gap=False
+        if stale:cmd=Intent();coast=forward_coast=brief_gap=False
+        recovery_reason=('coast_active' if coast else 'video_or_result_unavailable' if stale
+                         else 'measured_search_active' if search['active'] else 'yolo_available' if real_fresh
+                         else 'competing_detection' if not self.missing_detection
+                         else 'unconfirmed_target' if not t.confirmed else 'coast_expired' if age>COAST_SECONDS
+                         else 'prediction_uncertainty' if not forecast_ok else 'no_prior_track_command')
+        forward_reason=('forward_bridge_active' if forward_coast else recovery_reason if not coast
+                        else quality['reason'] if not quality['stable'] else 'recent_proximity' if self.spacing.close
+                        else 'bbox_clipped' if clipped else 'spacing_hold' if self.spacing.phase!='APPROACH'
+                        else 'forward_horizon_expired' if age>=STABLE_FORWARD_SECONDS
+                        else 'no_previous_forward_command' if previous.forward<=0 else 'alignment_or_size_limit')
         show_track=t.confirmed and (age<=.300 or coast) and not stream_stale and not result_stale
         track_confidence=(self.last_accepted.confidence*math.exp(-.25*age/.300)
                           if show_track and self.last_accepted is not None else None)
@@ -140,10 +112,12 @@ class FollowController:
                 'brief_detection_gap':brief_gap,
                 'prediction_recovery':coast,
                 'prediction_forward_allowed':forward_coast,
-                'prediction_quality':quality,
+                'recovery_reason':recovery_reason,'forward_recovery_reason':forward_reason,
+                'prediction_quality':quality,'prediction_uncertainty':uncertainty,
+                'continuous_dance':settings.follow_and_hold,'heading':heading,
                 'prediction_anchor':t.anchor(),
                 'prediction_display_allowed':coast,
-                'track_support':('prediction' if self.rejected else 'weak_yolo' if t.measurement_weak else 'yolo') if show_track else 'none',
+                'track_support':('prediction' if not real_fresh else 'weak_yolo' if t.measurement_weak else 'yolo') if show_track else 'none',
                 'detector_continuation_threshold':continuation_threshold(settings.confidence),
                 'detector_acquisition_threshold':max(settings.new_track_confidence,settings.confidence),
                 'last_strong_measurement_time':t.last_strong_time,
@@ -186,7 +160,7 @@ class FollowController:
                 'tracking_confidence':track_confidence,
                 'measurement_age_ms':None if not math.isfinite(age) else age*1000,
                 'confirmed':t.confirmed,'confirmation_hits':t.hits,
-                'accepted':not self.rejected,'raw_width_ratio':raw_width,
+                'accepted':real_fresh,'raw_width_ratio':raw_width,
                 'projected_width_ratio':projected,'error_x':ex,'error_y':ey,
                 'kinematics':asdict(k),'prediction_time':now,
                 'track_box':asdict(box) if show_track else None,

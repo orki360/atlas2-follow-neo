@@ -37,6 +37,9 @@ class VisualSpacingController:
 
     def update(self,now,track_active,valid,rejected,clipped,timed_out,mid,mtime,age,
                raw_width,filtered_width,ex,ey,command,settings):
+        if settings.follow_and_hold:
+            return self.update_continuous(now,track_active,valid,rejected,clipped,mid,mtime,
+                                          age,raw_width,filtered_width,ex,ey,command,settings)
         previous_phase=self.phase
         self.close_cleared=False
         self.deceleration_started=False; self.brake_started=False
@@ -152,4 +155,74 @@ class VisualSpacingController:
         self.stopped_now=self.phase=='STOPPED' and previous_phase!=self.phase
         self.completed_now=self.phase=='SEQUENCE_DONE' and previous_phase!=self.phase
         self.growth_rate=self.growth
+        return out.bounded(),projected
+
+    def update_continuous(self,now,track_active,valid,rejected,clipped,mid,mtime,age,
+                          raw_width,filtered_width,ex,ey,command,settings):
+        """Spacing grants translation; it cannot end a continuous Dance."""
+        self.close_cleared=self.deceleration_started=self.brake_started=False
+        self.stopped_now=self.completed_now=False;self.reverse=0.;self.growth_rate=None
+        out=replace(command).bounded();stop=settings.stop_width
+        if not math.isfinite(now) or self.last_now is not None and now<self.last_now:
+            self.phase='HOLD_REACQUIRE';self.reason='invalid_control_time';self.clear_resume()
+            return Intent(),self.last_width or 0.
+        self.last_now=now
+        good=(valid and not rejected and not clipped and mid is not None and mtime is not None
+              and 0<=now-mtime<=.25 and 0<=age<=.25 and 0<raw_width<=1.5 and 0<filtered_width<=1.5)
+        new=good and (self.last_id is None or mid>self.last_id) and (self.last_time is None or mtime>self.last_time)
+        width=max(raw_width,filtered_width) if good else self.last_width or 0.
+        if new:
+            if self.last_time is not None and .01<=mtime-self.last_time<=.50:
+                slope=clamp((width-self.last_width)/(mtime-self.last_time),-2.,2.)
+                self.growth=slope if slope<=0 else .25*slope+.75*max(0.,self.growth or 0.)
+            else:self.growth=None
+            self.last_id=mid;self.last_time=mtime;self.last_width=width
+        projected=width+min(stop*.25,max(0.,self.growth or 0.)*min(.30,age+.12)) if good else width
+        self.growth_rate=self.growth;self.forward_scale=0.
+        if new and (width>=stop*.60 or projected>=stop):self.close=True
+        distant=good and width<stop*.50 and projected<stop*.60
+        if not distant:self.far_hits=0;self.far_since=None
+        elif new:
+            if self.far_since is None:self.far_since=mtime
+            self.far_hits+=1
+            if self.close and self.far_hits>=3 and mtime-self.far_since>=.08:
+                self.close=False;self.close_cleared=True
+        if not good or not track_active:
+            # Keep the target-centering/search axes owned by the tracking FSM.
+            out.forward=out.roll=0.
+            if self.close or self.phase!='APPROACH':self.phase='HOLD_REACQUIRE'
+            self.reason='bbox_clipped' if clipped else 'awaiting_real_track'
+            self.clear_resume()
+        else:
+            if self.phase=='HOLD_REACQUIRE':
+                if self.resume_confirmed(now,new):
+                    self.phase='VISUAL_HOLD' if width>=stop*.85 else 'APPROACH'
+                    self.clear_resume()
+            elif self.phase in ('VISUAL_HOLD','CONFIRM_STOP'):
+                if width<stop*.85 and projected<stop*.90:
+                    if self.resume_confirmed(now,new):
+                        self.phase='APPROACH';self.clear_resume();self.hits=0
+                else:
+                    self.clear_resume()
+                    if self.phase=='CONFIRM_STOP' and new:self.hits+=1
+                    if self.hits>=2 or width>=stop:self.phase='VISUAL_HOLD'
+            if self.phase=='APPROACH' and projected>=stop:
+                self.phase='CONFIRM_STOP';self.hits=1;self.confirm_since=now
+            elif self.phase=='APPROACH' and width>=stop*.90:self.phase='VISUAL_HOLD'
+            if self.phase=='APPROACH':
+                self.forward_scale=clamp((stop-projected)/(stop*.40),0.,1.)
+                out.forward=max(0.,out.forward)*self.forward_scale
+                self.reason='predictive_deceleration' if self.forward_scale<1 else 'approach'
+            elif self.phase=='VISUAL_HOLD':
+                out.forward=out.roll=0.;self.reason='visual_size_hold'
+                error=(stop-width)/stop;aligned=abs(ex)<.35 and abs(ey)<.35
+                if aligned and error<-.10:
+                    out.forward=-min(.20,.50*(-error-.10))*settings.forward_limit
+                    self.reason='hold_backoff'
+            else:
+                out.forward=out.roll=0.;self.reason='confirming_translation_resume'
+        self.decelerating=self.phase=='APPROACH' and self.forward_scale<1.
+        if self.decelerating and not self.deceleration_reported:
+            self.deceleration_started=True;self.deceleration_reported=True
+        if out.forward>.01:self.last_forward=now;self.peak=max(self.peak,out.forward)
         return out.bounded(),projected

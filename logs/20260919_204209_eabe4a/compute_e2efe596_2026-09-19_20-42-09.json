@@ -1,9 +1,0 @@
-[
-{"cat" : "Session","pid" :21816,"tid" :6824,"dur" :18899,"ts" :16,"ph" : "X","name" :"model_loading_uri","args" : {}},
-{"cat" : "Session","pid" :21816,"tid" :6824,"dur" :358214,"ts" :290344,"ph" : "X","name" :"session_initialization","args" : {}},
-{"cat" : "Node","pid" :21816,"tid" :6824,"dur" :0,"ts" :673726,"ph" : "X","name" :"DmlFusedNode_0_0_fence_before","args" : {"op_name" : "DmlFusedNode_0_0"}},
-{"cat" : "Node","pid" :21816,"tid" :6824,"dur" :4500,"ts" :673738,"ph" : "X","name" :"DmlFusedNode_0_0_kernel_time","args" : {"parameter_size" : "0","provider" : "DmlExecutionProvider","op_name" : "DmlFusedNode_0_0","input_type_shape" : [{"float":[1,3,640,640]}],"node_index" : "294","output_type_shape" : [{"float":[1,5,8400]}],"activation_size" : "4915200","output_size" : "168000","thread_scheduling_stats" : {"main_thread": {"thread_pool_name": "session-1-intra-op", "thread_id": "6824", "block_size": [], "core": -1, "Distribution": 0, "DistributionEnqueue": 0, "Run": 0, "Wait": 0, "WaitRevoke": 0}, "sub_threads": {"21364": {"num_run": 0, "core": -1}}}}},
-{"cat" : "Node","pid" :21816,"tid" :6824,"dur" :0,"ts" :678259,"ph" : "X","name" :"DmlFusedNode_0_0_fence_after","args" : {"op_name" : "DmlFusedNode_0_0"}},
-{"cat" : "Session","pid" :21816,"tid" :6824,"dur" :4549,"ts" :673715,"ph" : "X","name" :"SequentialExecutor::Execute","args" : {}},
-{"cat" : "Session","pid" :21816,"tid" :6824,"dur" :15586,"ts" :668448,"ph" : "X","name" :"model_run","args" : {}}
-]

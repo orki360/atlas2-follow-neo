@@ -50,6 +50,9 @@ class ManualTests(unittest.TestCase):
     def start_control(self, reject=None, before_reply=None, on_event=None):
         server = Server(reject, before_reply)
         control = ManualControl('127.0.0.1', server.connect, on_event=on_event)
+        # This fixture tests the original explicit cap values. Update 9's
+        # requested 50% yaw/vertical defaults are verified in test_update9.
+        control.set_axis_limits(dict(yaw=.15,vertical=.015,roll=.015,forward=.015))
         self.addCleanup(lambda: (control.stop(), control.thread.join(3)))
         control.start()
         return server, control

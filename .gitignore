@@ -12,3 +12,9 @@ config.local.json
 .DS_Store
 Thumbs.db
 back_up_vers/
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.webm
+*.m4v

@@ -37,15 +37,33 @@ class BBoxTracker:
         self.velocity=self.accepted=self.last_strong_time=None
         self.measurement_weak=False
         self.history=deque(maxlen=24)
+        self.process_scale=1.;self.innovation_ratio=None
+        self.innovations=deque(maxlen=3)
 
     def anchor(self):
         if not self.initialized: return None
         a=self.kf.statePost[:,0]
+        stable=self.quality().get('motion_consistent',False)
         return dict(time=self.last_time,cx=float(a[0]),cy=float(a[1]),
                     width=max(2.,float(a[2])),height=max(2.,float(a[3])),
                     vx=float(a[4]),vy=float(a[5]),
-                    limit_x=max(12*self.scale[0],.8*float(a[2])),
-                    limit_y=max(12*self.scale[1],.8*float(a[3])))
+                    damp_after=.28 if stable else .10,decay_tau=.30 if stable else .16,
+                    limit_x=float(max(12*self.scale[0],min(self.frame_size[0]*.25,(2. if stable else .8)*float(a[2])))),
+                    limit_y=float(max(12*self.scale[1],min(self.frame_size[1]*.20,(1.5 if stable else .8)*float(a[3])))))
+
+    def uncertainty(self,now):
+        """Project covariance without correcting it or renewing real evidence."""
+        if not self.initialized:return dict(position_std_px=None,process_scale=self.process_scale)
+        dt=max(0.,now-self.last_time)
+        a=np.eye(8);a[0,4]=a[1,5]=dt
+        covariance=a@self.kf.errorCovPost@a.T
+        std=[]
+        for p in (0,1):
+            q=(180*self.scale[p])**2*self.process_scale*dt**3/3
+            std.append(float(math.sqrt(max(0.,covariance[p,p]+q))))
+        return dict(position_std_px=std,process_scale=self.process_scale,
+                    innovation_ratio=self.innovation_ratio,age_seconds=dt,
+                    model='adaptive_constant_velocity')
 
     def snapshot(self, now):
         anchor=self.anchor()
@@ -57,11 +75,10 @@ class BBoxTracker:
         # Only a new YOLO result advances Post. Continuous acceleration noise
         # makes the covariance independent of control/GUI polling frequency.
         dt=source_time-self.last_time
-        bounded=self.snapshot(source_time)
         a=np.eye(8,dtype=np.float64);a[0,4]=a[1,5]=dt
         q=np.zeros((8,8),np.float64)
         for p,v in ((0,4),(1,5)):
-            variance=(180*self.scale[p])**2
+            variance=(180*self.scale[p])**2*self.process_scale
             q[p,p]=dt**3/3*variance
             q[p,v]=q[v,p]=dt**2/2*variance
             q[v,v]=dt*variance
@@ -69,11 +86,8 @@ class BBoxTracker:
         q[3,3]=(45*self.scale[3])**2*dt
         self.kf.transitionMatrix=a;self.kf.processNoiseCov=q
         self.kf.predict()
-        if dt>.10:
-            state=self.kf.statePre.copy()
-            state[0,0]=bounded.cx;state[1,0]=bounded.cy
-            state[4,0]=bounded.vx;state[5,0]=bounded.vy
-            self.kf.statePre=state
+        # Do not inject the damped display forecast into a CV covariance.
+        # The filter's mean and covariance must use the same motion model.
 
     def select(self, detections, start_confidence, source_time=None,
                strong_confidence=.25, continuation_confidence=.25):
@@ -120,11 +134,21 @@ class BBoxTracker:
             self.kf.statePost=state
             self.kf.errorCovPost=np.diag(np.array([12.,12.,20.,20.,1200.,1200.,500.,500.])*np.tile(self.scale,2)**2)
             self.initialized=True;self.hits=1;self.velocity=None;self.history.clear()
+            self.process_scale=1.;self.innovation_ratio=None;self.innovations.clear()
         else:
             self._predict_measurement(source_time)
             position_std=np.maximum(3*self.scale[:2],.04*raw[2:])
             noise=np.r_[position_std**2,(3.5*self.scale[2:])**2]
             self.kf.measurementNoiseCov=np.diag(noise)/clamp(target.confidence,.25,1)
+            innovation=raw[:2]-self.kf.statePre[:2,0]
+            variance=np.diag(self.kf.errorCovPre)[:2]+np.diag(self.kf.measurementNoiseCov)[:2]
+            self.innovation_ratio=float(np.mean(innovation**2/np.maximum(variance,1.)))
+            self.innovations.append(innovation.copy())
+            # Alternating detector jitter must not be mistaken for a maneuver.
+            coherent=(len(self.innovations)==3 and target.confidence>=strong_confidence
+                      and all(float(a@b)>0 for a,b in zip(self.innovations,list(self.innovations)[1:])))
+            wanted=clamp(self.innovation_ratio,1.,9.) if coherent and len(self.history)>=3 else 1.
+            self.process_scale=.80*self.process_scale+.20*wanted
             self.kf.correct(raw.reshape(4,1))
             state=self.kf.statePost.copy()
             state[4:6,0]=np.clip(state[4:6,0],-np.array(self.frame_size)*.8,np.array(self.frame_size)*.8)
@@ -142,7 +166,7 @@ class BBoxTracker:
 
     def quality(self):
         """Real-measurement consistency; forecasts never add evidence here."""
-        out=dict(stable=False,reason='insufficient_history',samples=len(self.history),
+        out=dict(stable=False,motion_consistent=False,reason='insufficient_history',samples=len(self.history),
                  span_ms=0.,residual_ratio=None)
         if len(self.history)<4: return out
         times=np.array([r[0] for r in self.history]);times-=times[-1]
@@ -161,7 +185,12 @@ class BBoxTracker:
             out['reason']='weak_measurements'
         elif ratio>1 or latest>1.5 or np.any(size_change>1.6): out['reason']='inconsistent_boxes'
         elif np.any(np.abs(state[4:6])/np.array(self.frame_size)>.35): out['reason']='fast_image_motion'
-        elif np.any(np.abs(state[4:6]-slope)>np.maximum(60*self.scale[:2],.35*values[-1,2:]/(-times[0]))):
+        elif np.any(np.abs(state[4:6]-slope)>np.maximum(30*self.scale[:2],.10*values[-1,2:]/(-times[0]))):
             out['reason']='changing_direction'
-        else: out.update(stable=True,reason='consistent_measurements')
+        else:
+            out.update(stable=True,reason='consistent_measurements')
+            travel=(values[-1,:2]-values[0,:2])/self.scale[:2]
+            steps=np.diff(values[:,:2],axis=0)/self.scale[:2]
+            substantial=float(np.linalg.norm(travel))>max(8.,.20*float(np.max(values[-1,2:]/self.scale[2:])))
+            out['motion_consistent']=bool(substantial and np.mean(steps@travel>0)>=.75)
         return out

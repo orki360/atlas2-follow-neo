@@ -10,8 +10,8 @@ from .edge_search import yaw_override
 MOVEMENT_KEYS = frozenset(('w', 's', 'a', 'd', 'up', 'down', 'left', 'right'))
 AXES = ('yaw', 'vertical', 'roll', 'forward')
 DEFAULT_AXIS_LIMITS = {
-    'yaw': .15,
-    'vertical': .015,
+    'yaw': .50,
+    'vertical': .50,
     'roll': .015,
     'forward': .015,
 }
@@ -184,7 +184,7 @@ class ManualControl:
                     # factor is also a hard maximum for the transmitted axis.
                     gate_reason=self.dance_status if mode=='DANCE' else 'manual'
                     edge_override=(mode=='DANCE' and not self.motion_hold
-                                   and gate_reason.startswith('Edge search /')
+                                   and gate_reason.startswith('Search /')
                                    and yaw_override(decision,command_time,self.dance_started)!=0.)
                     phase=decision.get('spacing_phase') if decision else None
                     if mode=='DANCE':
@@ -197,7 +197,7 @@ class ManualControl:
                         else:
                             active=(wanted and self.enabled and not self.motion_hold
                                     and gate_reason.startswith(('Tracking /','Kalman recovery /'))
-                                    and phase in ('APPROACH','VISUAL_HOLD'))
+                                    and phase in ('APPROACH','VISUAL_HOLD','HOLD_REACQUIRE','CONFIRM_STOP'))
                             shaped_values=self.smoother.update(raw_values,command_time,active)
                         if gate_reason.startswith('Kalman recovery /'):
                             # Do not let the smoothing history delay the coast

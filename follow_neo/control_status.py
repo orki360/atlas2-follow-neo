@@ -19,7 +19,7 @@ def control_indicator(control, rejection='', selected=None):
         return 'ENABLING CONTROL', 'Waiting for phone acknowledgement', '#76550d'
     limits=getattr(control,'axis_limits',{})
     if isinstance(limits,dict) and limits and all(value==0 for value in limits.values()):
-        if not (dance and control.dance_status.startswith('Edge search /')):
+        if not (dance and control.dance_status.startswith('Search /')):
             return ('DANCE ON - SPEED 0' if dance else 'MANUAL - SPEED 0'), 'Movement held at zero by all axis limits', '#76550d'
     if getattr(control,'motion_hold',False)==True:
         return ('DANCE ON - MOVEMENT PAUSED' if dance else 'MANUAL - MOVEMENT PAUSED'), 'Flight action | Enable (E) to resume movement', '#76550d'
@@ -27,12 +27,14 @@ def control_indicator(control, rejection='', selected=None):
         detail = control.dance_status
         if detail.startswith('Keyboard override'):
             return 'DANCE ON - KEYBOARD OVERRIDE', detail, '#234f86'
-        if detail.startswith('Edge search /'):
-            return 'DANCE ON - EDGE SEARCH / YAW 100%', detail + ' | Q / Esc: release', '#76550d'
+        if detail.startswith('Search /'):
+            return 'DANCE ON - SEARCH / YAW 100%', detail + ' | Q / Esc: release', '#76550d'
         if detail.startswith('Tracking /'):
             return 'NEO DANCE ON - TRACKING', detail + ' | Q / Esc: release', '#116846'
         if detail.startswith('Kalman recovery /'):
-            return 'DANCE ON - SHORT PREDICTION', 'No fresh YOLO | Decaying corrections, then stop | Q / Esc: release', '#76550d'
+            return 'DANCE ON - SHORT PREDICTION', 'No fresh YOLO | Short prediction; Dance remains active | Q / Esc: release', '#76550d'
+        if detail.startswith('Hover /'):
+            return 'DANCE ON - HOVER / WAIT', detail + ' | Auto reacquire enabled', '#76550d'
         if detail.startswith('Sequence stopped'):
             return 'NEO DANCE ON - STOPPED', detail, '#922c36'
         return 'NEO DANCE ON - WAITING', detail + ' | Movement held at zero', '#76550d'

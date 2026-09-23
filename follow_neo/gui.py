@@ -62,7 +62,7 @@ class FollowLabWindow:
         if self.config_path.exists():
             try: cfg=json.loads(self.config_path.read_text(encoding='utf-8'))
             except (OSError,ValueError): pass
-        self.root.title('ATLAS2 Follow NEO | Live Perception Lab v0.10.0 - Update 8')
+        self.root.title('ATLAS2 Follow NEO | Live Perception Lab v0.11.0 - Update 9')
         self.root.geometry('1440x880'); self.root.minsize(1200,760)
         self.root.configure(bg='#101820')
         self.root.protocol('WM_DELETE_WINDOW',self.close)
@@ -138,7 +138,7 @@ class FollowLabWindow:
             exact.bind('<FocusOut>',lambda event,selected=axis:self.change_axis_speed(
                 selected,self.axis_entry_vars[selected].get()))
             ttk.Label(row,textvariable=self.axis_limit_labels[axis],width=7).pack(side='left',padx=(3,0))
-        ttk.Label(self.speed_bar,text='Normal caps\nEdge search: yaw 100%',foreground='#8cbbb8').pack(side='left',padx=8)
+        ttk.Label(self.speed_bar,text='Normal caps\nSearch: yaw 100%',foreground='#8cbbb8').pack(side='left',padx=8)
         self.manual_status=tk.StringVar(value='Keyboard disconnected | Start Control Server on phone')
         ttk.Label(root,textvariable=self.manual_status,padding=(12,2),foreground='#6ad5cb').pack(fill='x')
         self.dance_status=tk.StringVar(value='Dance off | Take off manually, enable control, then Start NEO Dance')
@@ -146,7 +146,19 @@ class FollowLabWindow:
                                      bg='#354452',fg='white',pady=8)
         self.control_banner.pack(fill='x',padx=12,pady=(4,0))
         ttk.Label(root,textvariable=self.dance_status,padding=(12,4),foreground='#d9b56c').pack(fill='x')
-        ttk.Label(root,text='W/S: up/down   A/D: yaw   Arrows: forward/back/left/right   Timed edge search overrides only yaw to 100%',padding=(12,2)).pack(fill='x')
+        search_values=asdict(settings_from_config(cfg))
+        self.search_vars={key:tk.StringVar(value=f'{search_values[key]:g}')
+                          for key in ('search_yaw_degrees','edge_search_seconds')}
+        self.search_bar=ttk.Frame(root,padding=(12,4));self.search_bar.pack(fill='x')
+        for label,key,lo,hi,step in (('Search YAW (deg)','search_yaw_degrees',0,180,5),
+                                     ('Search time (s)','edge_search_seconds',2,10,.5)):
+            ttk.Label(self.search_bar,text=label).pack(side='left',padx=(0,8))
+            ttk.Spinbox(self.search_bar,textvariable=self.search_vars[key],from_=lo,to=hi,
+                        increment=step,width=7).pack(side='left',padx=(0,18))
+        ttk.Button(self.search_bar,text='Apply search',command=self.apply).pack(side='left',padx=4)
+        ttk.Label(self.search_bar,text='0 deg = no turn | angle OR time limit | heading required',
+                  foreground='#8cbbb8').pack(side='left',padx=12)
+        ttk.Label(root,text='W/S: up/down   A/D: yaw   Arrows: forward/back/left/right   Measured yaw search overrides only yaw to 100%',padding=(12,2)).pack(fill='x')
         self.root.bind('<KeyPress>',self.key_press)
         self.root.bind('<KeyRelease>',self.key_release)
         self.root.bind('<FocusOut>',self.focus_out)
@@ -193,27 +205,26 @@ class FollowLabWindow:
         settings=ttk.LabelFrame(right,text='Detection and tracking',padding=10); settings.pack(fill='x',pady=10)
         values=asdict(settings_from_config(cfg))
         self.loaded_values=values
-        self.vars={}
+        self.vars=dict(self.search_vars)
         controls=[('YOLO acquire confidence','confidence',.05,.95,.05),('New track confidence','new_track_confidence',.05,.99,.05),
                   ('NMS IoU','nms_iou',.05,.95,.05),('Video processing FPS','video_fps',1,60,1),
                   ('Inference target FPS','inference_fps',1,60,1),
                   ('Result stale (seconds)','stale_seconds',.1,2,.05),
                   ('Stop BBOX width %','stop_width',1,50,2),('Yaw limit %','yaw_limit',10,100,5),
-                  ('Vertical limit %','vertical_limit',10,100,5),('Forward limit %','forward_limit',0,100,5),
-                  ('Edge search max seconds','edge_search_seconds',.2,2,.1)]
+                  ('Vertical limit %','vertical_limit',10,100,5),('Forward limit %','forward_limit',0,100,5)]
         self.percent={'stop_width','yaw_limit','vertical_limit','forward_limit','search_yaw'}
         for row,(label,key,lo,hi,step) in enumerate(controls):
             ttk.Label(settings,text=label).grid(row=row,column=0,sticky='w',pady=3)
             self.vars[key]=tk.StringVar(value=f'{values[key]*(100 if key in self.percent else 1):g}')
             ttk.Spinbox(settings,textvariable=self.vars[key],from_=lo,to=hi,increment=step,width=7).grid(row=row,column=1,padx=(8,0))
         self.hold=tk.BooleanVar(value=bool(values['follow_and_hold']))
-        ttk.Checkbutton(settings,text='Follow & Hold',variable=self.hold).grid(row=len(controls),columnspan=2,sticky='w',pady=6)
+        ttk.Checkbutton(settings,text='Continuous Dance / Follow & Hold',variable=self.hold).grid(row=len(controls),columnspan=2,sticky='w',pady=6)
         self.edge_search_on=tk.BooleanVar(value=bool(values['edge_search_enabled']))
-        ttk.Checkbutton(settings,text='Edge-exit search: yaw 100%',variable=self.edge_search_on).grid(row=len(controls)+1,columnspan=2,sticky='w',pady=6)
+        ttk.Checkbutton(settings,text='Directional search: yaw 100%',variable=self.edge_search_on).grid(row=len(controls)+1,columnspan=2,sticky='w',pady=6)
         ttk.Button(settings,text='Apply + reset tracking',command=self.apply).grid(row=len(controls)+2,columnspan=2,sticky='ew')
         self.settings_note=tk.StringVar(value='Settings ready')
         ttk.Label(settings,textvariable=self.settings_note,foreground='#d9b56c',wraplength=285).grid(row=len(controls)+3,columnspan=2,sticky='w',pady=6)
-        ttk.Label(settings,text='Confirmed targets can briefly use a lower confidence\nwhen position and size agree with the track.',
+        ttk.Label(settings,text='Search ends at the angle OR time limit.\n0 deg disables the turn. Heading uses TCP 9997.\nTarget loss keeps Dance ON; reacquisition is automatic.',
                   foreground='#8cbbb8',wraplength=285).grid(row=len(controls)+4,columnspan=2,sticky='w')
         ttk.Button(right,text='Reset target / spacing',command=self.reset).pack(fill='x',pady=2)
         ttk.Button(right,text='Open session logs',command=self.open_logs).pack(fill='x',pady=2)
@@ -232,7 +243,7 @@ class FollowLabWindow:
         return Settings(**data).validate()
 
     def save_config(self):
-        data={'schema_version':4,'phone_ip':self.ip.get().strip(),'codec':self.codec.get(),
+        data={'schema_version':5,'phone_ip':self.ip.get().strip(),'codec':self.codec.get(),
               'compute':self.compute.get(),'gpu_adapter':self.device.get(),'settings':asdict(self.settings),
               'axis_limits':self.current_axis_limits()}
         tmp=self.config_path.with_suffix('.tmp')
@@ -333,7 +344,8 @@ class FollowLabWindow:
         self.show_control_indicator()
 
     def finish_terminal_dance(self,decision):
-        """Mirror C++ stopFollow(): terminal spacing ends this activation."""
+        """Only the explicitly selected one-shot mode has a terminal spacing state."""
+        if decision and decision.get('continuous_dance',True):return False
         if (not decision or not self.dance_selected or not self.manual
                 or self.manual.mode!='DANCE' or self.dance_terminal_seen):
             return False
@@ -539,6 +551,10 @@ class FollowLabWindow:
             elif s.log.error: self.notice.set('Log write failed: '+s.log.error)
             if decision:
                 age=decision.get('measurement_age_ms'); age_text='--' if age is None else f'{age:.0f} ms'
+                search=decision.get('edge_search') or {}
+                search_text=(f"Search: {search.get('angle_progress_degrees',0):.0f} / "
+                             f"{self.settings.search_yaw_degrees:g} deg | {self.settings.edge_search_seconds:g} s\n"
+                             f"{search.get('reason','--')}\n{s.heading.status}")
                 result=s.result.get(); inference='--' if result is None else f"{result['inference_ms']:.1f} ms"
                 compute=s.model_info.get('compute',{}) if s.model_info else {}
                 compute_label=compute.get('label','loading')
@@ -550,6 +566,7 @@ class FollowLabWindow:
                     f"Spacing: {decision.get('spacing_phase','--')}\n"
                     f"Width: {100*decision.get('raw_width_ratio',0):.1f}%\n"
                     f"{decision.get('reason','')}\n{decision.get('spacing_reason','')}"
+                    +'\n'+search_text
                     +('\nMovement preview stopped: RESET required' if decision.get('spacing_phase')=='STOPPED' else '')
                     +('\n'+compute['fallback_reason'][:200] if compute.get('fallback_reason') else ''))
                 c=decision['intent']; self.intent.set(f"Yaw {c['yaw']:+.3f}   Up {c['vertical']:+.3f}\nSide {c['roll']:+.3f}  Forward {c['forward']:+.3f}")

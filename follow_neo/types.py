@@ -69,7 +69,8 @@ class Settings:
     inference_fps: float = 30.0
     video_fps: float = 30.0
     edge_search_enabled: bool = True
-    edge_search_seconds: float = 1.0
+    edge_search_seconds: float = 4.0
+    search_yaw_degrees: float = 90.0
     stale_seconds: float = .75
     reacquire_seconds: float = .75
     stop_width: float = .20
@@ -85,7 +86,7 @@ class Settings:
             raise ValueError('edge_search_enabled must be a boolean')
         bounds = {'confidence':(.05,.95), 'nms_iou':(.05,.95),
                   'new_track_confidence':(.05,.99), 'inference_fps':(1,60), 'video_fps':(1,60),
-                  'edge_search_seconds':(.2,2),
+                  'edge_search_seconds':(2,10), 'search_yaw_degrees':(0,180),
                   'stale_seconds':(.1,2), 'reacquire_seconds':(.65,5),
                   'stop_width':(.01,.50), 'yaw_limit':(.1,1),
                   'vertical_limit':(.1,1), 'forward_limit':(0,1),
@@ -104,4 +105,8 @@ def settings_from_config(config):
     if config.get('schema_version',1)<4:
         # Requested 30/30 migration, once; other tracking/axis values survive.
         values.update(video_fps=30.,inference_fps=30.)
+    if config.get('schema_version',1)<5:
+        values.update(edge_search_seconds=4.,search_yaw_degrees=90.)
+        # Continuous dance is now the default; existing axis limits are separate.
+        values['follow_and_hold']=True
     return Settings(**values).validate()

@@ -16,6 +16,7 @@ from .recording import VideoRecorder
 from . import __version__
 from .prediction import continuation_threshold
 from .cadence import FrameRateGate
+from .telemetry import HeadingReceiver
 
 
 class SessionLog:
@@ -67,11 +68,12 @@ class FollowSession:
         raw_path=self.output/f'video.{codec}' if record_raw else None
         self.receiver=VideoReceiver(host,codec=codec,raw_path=raw_path,on_event=self.log.write,
                                     on_frame=self._record_frame,processing_fps=self.settings.video_fps)
+        self.heading=HeadingReceiver(host,on_event=self.log.write)
         self.inference_thread=threading.Thread(target=self._infer,name='neo-inference',daemon=True)
         self.control_thread=threading.Thread(target=self._control,name='follow-preview',daemon=True)
 
     def start(self):
-        self.receiver.start(); self.inference_thread.start(); self.control_thread.start()
+        self.receiver.start(); self.heading.start(); self.inference_thread.start(); self.control_thread.start()
 
     def record_control(self,event,data):
         if event=='flight_command' and data.get('server_acknowledged'):
@@ -163,7 +165,8 @@ class FollowSession:
                     controller.observe(detections,src.decoded_at,now,src.frame_id,
                                        (src.image.shape[1],src.image.shape[0]),settings)
                     fresh_result=True
-                decision=controller.tick(now,w,h,frame.decoded_at if self.receiver.state=='STREAMING' else None,settings)
+                decision=controller.tick(now,w,h,frame.decoded_at if self.receiver.state=='STREAMING' else None,
+                                         settings,self.heading.get())
                 if self.model_error:
                     decision.update(state='ERROR',reason='inference_failed',stale=True,track_box=None,
                                     intent={'yaw':0.,'vertical':0.,'roll':0.,'forward':0.})
@@ -191,7 +194,7 @@ class FollowSession:
                               'intent':{'yaw':0.,'vertical':0.,'roll':0.,'forward':0.},'command_sent':False})
 
     def stop(self):
-        self.stop_event.set(); self.receiver.stop()
+        self.stop_event.set(); self.receiver.stop(); self.heading.stop()
         for thread in (self.inference_thread,self.control_thread):
             if thread.ident: thread.join()
         with self.recorder_lock: recorder=self.recorder
