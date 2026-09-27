@@ -1,5 +1,5 @@
 """Tkinter GUI. All Tk calls stay on the main thread."""
-from dataclasses import asdict, fields
+from dataclasses import asdict, fields, replace
 from pathlib import Path
 from collections import deque
 import json
@@ -17,6 +17,7 @@ from PIL import Image, ImageTk
 from .types import Settings, settings_from_config
 from .session import FollowSession
 from .overlay import render_bundle
+from .models import DEFAULT_MODEL, LEGACY_MODEL
 from .manual import ManualControl, MOVEMENT_KEYS, AXES, DEFAULT_AXIS_LIMITS
 from .control_status import control_indicator
 
@@ -62,7 +63,7 @@ class FollowLabWindow:
         if self.config_path.exists():
             try: cfg=json.loads(self.config_path.read_text(encoding='utf-8'))
             except (OSError,ValueError): pass
-        self.root.title('ATLAS2 Follow NEO | Live Perception Lab v0.11.0 - Update 9')
+        self.root.title('ATLAS2 Follow NEO | Live Perception Lab v0.12.0 - Update 10')
         self.root.geometry('1440x880'); self.root.minsize(1200,760)
         self.root.configure(bg='#101820')
         self.root.protocol('WM_DELETE_WINDOW',self.close)
@@ -76,7 +77,7 @@ class FollowLabWindow:
         style.configure('TSpinbox',fieldbackground='#233543',foreground='white',arrowsize=14)
         style.configure('TLabelframe.Label',foreground='#6ad5cb',font=('Segoe UI',10,'bold'))
         style.configure('Header.TLabel',font=('Segoe UI',18,'bold'),background='#101820')
-        top=ttk.Frame(root,padding=12); top.pack(fill='x')
+        top=ttk.Frame(root,padding=(12,4)); top.pack(fill='x')
         ttk.Label(top,text='ATLAS2  /  FOLLOW NEO',style='Header.TLabel').pack(side='left')
         ttk.Label(top,text='NEO DANCE + MANUAL KEYBOARD',foreground='#6ad5cb').pack(side='right')
         bar=ttk.Frame(root,padding=(12,4)); bar.pack(fill='x')
@@ -100,7 +101,16 @@ class FollowLabWindow:
         self.device=tk.IntVar(value=cfg.get('gpu_adapter',-1))
         self.device_picker=ttk.Spinbox(compute_bar,textvariable=self.device,from_=-1,to=31,width=4)
         self.device_picker.pack(side='left',padx=8)
-        ttk.Label(compute_bar,text='YOLO + Kalman | short prediction is marked separately',foreground='#8cbbb8').pack(side='left',padx=12)
+        ttk.Label(compute_bar,text='Model').pack(side='left',padx=(8,0))
+        self.model=tk.StringVar(value=cfg.get('model_name',DEFAULT_MODEL))
+        if self.model.get() not in (DEFAULT_MODEL,LEGACY_MODEL):self.model.set(DEFAULT_MODEL)
+        self.model_picker=ttk.Combobox(compute_bar,textvariable=self.model,values=[DEFAULT_MODEL,LEGACY_MODEL],state='readonly',width=27)
+        self.model_picker.pack(side='left',padx=6)
+        self.recording_profile=tk.StringVar(value=cfg.get('recording_profile','Auto'))
+        if self.recording_profile.get() not in ('Auto','1080p','720p'):self.recording_profile.set('Auto')
+        ttk.Label(compute_bar,text='Recording').pack(side='left',padx=(8,0))
+        self.recording_picker=ttk.Combobox(compute_bar,textvariable=self.recording_profile,values=['Auto','1080p','720p'],state='readonly',width=7)
+        self.recording_picker.pack(side='left',padx=6)
 
         manual_bar=ttk.Frame(root,padding=(12,4)); manual_bar.pack(fill='x')
         self.control_bar=manual_bar
@@ -112,57 +122,20 @@ class FollowLabWindow:
         ttk.Button(manual_bar,text='Land (R)',command=lambda:self.manual_action('land')).pack(side='left',padx=4)
         self.dance_button=ttk.Button(manual_bar,text='START DANCE',command=self.toggle_dance)
         self.dance_button.pack(side='left',padx=8)
-        self.speed_bar=ttk.Frame(root,padding=(12,4)); self.speed_bar.pack(fill='x')
-        ttk.Label(self.speed_bar,text='NORMAL AXIS LIMITS',foreground='#6ad5cb').pack(side='left',padx=(0,8))
-        stored_limits=cfg.get('axis_limits',{})
-        self.axis_limit_vars={}; self.axis_limit_labels={}; self.axis_entry_vars={}
-        axis_labels=(('Up / Down','vertical'),('Yaw L / R','yaw'),
-                     ('Forward / Back','forward'),('Side L / R','roll'))
-        for label,axis in axis_labels:
-            group=ttk.Frame(self.speed_bar); group.pack(side='left',padx=5)
-            value=max(0.,min(1.,float(stored_limits.get(axis,DEFAULT_AXIS_LIMITS[axis]))))*100
-            self.axis_limit_vars[axis]=tk.DoubleVar(value=value)
-            self.axis_entry_vars[axis]=tk.StringVar(value=f'{value:g}')
-            self.axis_limit_labels[axis]=tk.StringVar(value=f'{value:.1f}%')
-            ttk.Label(group,text=label).pack(anchor='w')
-            row=ttk.Frame(group); row.pack()
-            ttk.Scale(row,from_=0,to=100,variable=self.axis_limit_vars[axis],length=105,
-                      command=lambda new_value,selected=axis:self.change_axis_speed(selected,new_value)).pack(side='left')
-            exact=ttk.Spinbox(row,textvariable=self.axis_entry_vars[axis],from_=0,to=100,
-                              increment=.5,width=6,
-                              command=lambda selected=axis:self.change_axis_speed(
-                                  selected,self.axis_entry_vars[selected].get()))
-            exact.pack(side='left',padx=(4,0))
-            exact.bind('<Return>',lambda event,selected=axis:self.change_axis_speed(
-                selected,self.axis_entry_vars[selected].get()))
-            exact.bind('<FocusOut>',lambda event,selected=axis:self.change_axis_speed(
-                selected,self.axis_entry_vars[selected].get()))
-            ttk.Label(row,textvariable=self.axis_limit_labels[axis],width=7).pack(side='left',padx=(3,0))
-        ttk.Label(self.speed_bar,text='Normal caps\nSearch: yaw 100%',foreground='#8cbbb8').pack(side='left',padx=8)
         self.manual_status=tk.StringVar(value='Keyboard disconnected | Start Control Server on phone')
         ttk.Label(root,textvariable=self.manual_status,padding=(12,2),foreground='#6ad5cb').pack(fill='x')
         self.dance_status=tk.StringVar(value='Dance off | Take off manually, enable control, then Start NEO Dance')
-        self.control_banner=tk.Label(root,text='CONTROL DISCONNECTED',font=('Segoe UI',19,'bold'),
-                                     bg='#354452',fg='white',pady=8)
+        self.control_banner=tk.Label(root,text='CONTROL DISCONNECTED',font=('Segoe UI',12,'bold'),
+                                     bg='#354452',fg='white',pady=3)
         self.control_banner.pack(fill='x',padx=12,pady=(4,0))
         ttk.Label(root,textvariable=self.dance_status,padding=(12,4),foreground='#d9b56c').pack(fill='x')
         search_values=asdict(settings_from_config(cfg))
         self.search_vars={key:tk.StringVar(value=f'{search_values[key]:g}')
                           for key in ('search_yaw_degrees','edge_search_seconds')}
-        self.search_bar=ttk.Frame(root,padding=(12,4));self.search_bar.pack(fill='x')
-        for label,key,lo,hi,step in (('Search YAW (deg)','search_yaw_degrees',0,180,5),
-                                     ('Search time (s)','edge_search_seconds',2,10,.5)):
-            ttk.Label(self.search_bar,text=label).pack(side='left',padx=(0,8))
-            ttk.Spinbox(self.search_bar,textvariable=self.search_vars[key],from_=lo,to=hi,
-                        increment=step,width=7).pack(side='left',padx=(0,18))
-        ttk.Button(self.search_bar,text='Apply search',command=self.apply).pack(side='left',padx=4)
-        ttk.Label(self.search_bar,text='0 deg = no turn | angle OR time limit | heading required',
-                  foreground='#8cbbb8').pack(side='left',padx=12)
-        ttk.Label(root,text='W/S: up/down   A/D: yaw   Arrows: forward/back/left/right   Measured yaw search overrides only yaw to 100%',padding=(12,2)).pack(fill='x')
         self.root.bind('<KeyPress>',self.key_press)
         self.root.bind('<KeyRelease>',self.key_release)
         self.root.bind('<FocusOut>',self.focus_out)
-        body=ttk.Frame(root,padding=12); body.pack(fill='both',expand=True)
+        body=ttk.Frame(root,padding=(12,4)); body.pack(fill='both',expand=True)
         body.columnconfigure(0,weight=1); body.rowconfigure(0,weight=1)
         left=ttk.Frame(body); left.grid(row=0,column=0,sticky='nsew',padx=(0,12))
         viewbar=ttk.Frame(left); viewbar.pack(fill='x',pady=(0,8))
@@ -187,22 +160,68 @@ class FollowLabWindow:
         ttk.Label(left,textvariable=self.video_stats,wraplength=950,padding=8).pack(fill='x')
 
         sidebar=ttk.Frame(body); sidebar.grid(row=0,column=1,sticky='nsew')
-        sidecanvas=tk.Canvas(sidebar,width=320,bg='#17232d',highlightthickness=0)
-        scroll=ttk.Scrollbar(sidebar,orient='vertical',command=sidecanvas.yview)
-        sidecanvas.configure(yscrollcommand=scroll.set)
-        scroll.pack(side='right',fill='y'); sidecanvas.pack(side='left',fill='both',expand=True)
-        right=ttk.Frame(sidecanvas)
-        sidecanvas.create_window((0,0),window=right,anchor='nw',width=314)
-        right.bind('<Configure>',lambda event:sidecanvas.configure(scrollregion=sidecanvas.bbox('all')))
+        self.tabs=ttk.Notebook(sidebar,width=355);self.tabs.pack(fill='both',expand=True)
+        def page(title):
+            tab=ttk.Frame(self.tabs);self.tabs.add(tab,text=title)
+            canvas=tk.Canvas(tab,width=345,bg='#17232d',highlightthickness=0)
+            scroll=ttk.Scrollbar(tab,orient='vertical',command=canvas.yview)
+            canvas.configure(yscrollcommand=scroll.set)
+            scroll.pack(side='right',fill='y');canvas.pack(side='left',fill='both',expand=True)
+            content=ttk.Frame(canvas,padding=5)
+            item=canvas.create_window((0,0),window=content,anchor='nw',width=339)
+            content.bind('<Configure>',lambda e:canvas.configure(scrollregion=canvas.bbox('all')))
+            canvas.bind('<Configure>',lambda e:canvas.itemconfigure(item,width=e.width))
+            return content,tab
+        right,self.status_tab=page('Tracking')
+        controls_page,self.controls_tab=page('Control / Search')
+        settings_page,self.settings_tab=page('Settings')
+        self.speed_bar=ttk.LabelFrame(controls_page,text='Axis limits',padding=8); self.speed_bar.pack(fill='x')
+        ttk.Label(self.speed_bar,text='Normal tracking and keyboard (%)',foreground='#6ad5cb').pack(anchor='w')
+        stored_limits=cfg.get('axis_limits',{})
+        self.axis_limit_vars={}; self.axis_limit_labels={}; self.axis_entry_vars={}
+        axis_labels=(('Up / Down','vertical'),('Yaw L / R','yaw'),
+                     ('Forward / Back','forward'),('Side L / R','roll'))
+        for label,axis in axis_labels:
+            group=ttk.Frame(self.speed_bar); group.pack(fill='x',pady=3)
+            value=max(0.,min(1.,float(stored_limits.get(axis,DEFAULT_AXIS_LIMITS[axis]))))*100
+            self.axis_limit_vars[axis]=tk.DoubleVar(value=value)
+            self.axis_entry_vars[axis]=tk.StringVar(value=f'{value:g}')
+            self.axis_limit_labels[axis]=tk.StringVar(value=f'{value:.1f}%')
+            ttk.Label(group,text=label).pack(anchor='w')
+            row=ttk.Frame(group); row.pack()
+            ttk.Scale(row,from_=0,to=100,variable=self.axis_limit_vars[axis],length=145,
+                      command=lambda new_value,selected=axis:self.change_axis_speed(selected,new_value)).pack(side='left')
+            exact=ttk.Spinbox(row,textvariable=self.axis_entry_vars[axis],from_=0,to=100,
+                              increment=.5,width=6,
+                              command=lambda selected=axis:self.change_axis_speed(
+                                  selected,self.axis_entry_vars[selected].get()))
+            exact.pack(side='left',padx=(4,0))
+            exact.bind('<Return>',lambda event,selected=axis:self.change_axis_speed(
+                selected,self.axis_entry_vars[selected].get()))
+            exact.bind('<FocusOut>',lambda event,selected=axis:self.change_axis_speed(
+                selected,self.axis_entry_vars[selected].get()))
+            ttk.Label(row,textvariable=self.axis_limit_labels[axis],width=7).pack(side='left',padx=(3,0))
+        ttk.Label(self.speed_bar,text='Normal caps\nSearch: yaw 100%',foreground='#8cbbb8').pack(anchor='w',pady=3)
+        self.search_bar=ttk.LabelFrame(controls_page,text='Search after target loss',padding=8);self.search_bar.pack(fill='x',pady=8)
+        for label,key,lo,hi,step in (('Search YAW (deg)','search_yaw_degrees',0,180,5),
+                                     ('Search time (s)','edge_search_seconds',2,10,.5)):
+            row=ttk.Frame(self.search_bar);row.pack(fill='x',pady=3)
+            ttk.Label(row,text=label).pack(side='left',padx=(0,8))
+            ttk.Spinbox(row,textvariable=self.search_vars[key],from_=lo,to=hi,
+                        increment=step,width=7).pack(side='right')
+        ttk.Button(self.search_bar,text='Apply search',command=self.apply_search).pack(fill='x',pady=5)
+        ttk.Label(self.search_bar,text='One directional arc; angle OR time limit.\n0 deg disables turning. Heading: TCP 9997.',
+                  foreground='#8cbbb8',wraplength=300).pack(anchor='w')
+        ttk.Label(controls_page,text='W/S: up/down   A/D: yaw\nArrows: forward/back/left/right\nSearch overrides yaw only to 100%.',wraplength=300).pack(anchor='w',pady=6)
         self.state=tk.StringVar(value='DISCONNECTED')
-        self.metrics=tk.StringVar(value='Model: best.onnx | waiting\nTracking intent is preview only.')
+        self.metrics=tk.StringVar(value='Model: '+self.model.get()+' | waiting')
         self.intent=tk.StringVar(value='Yaw +0.000   Up +0.000\nSide +0.000  Forward +0.000')
         status=ttk.LabelFrame(right,text='Tracking status',padding=10); status.pack(fill='x')
         ttk.Label(status,textvariable=self.state,font=('Segoe UI',14,'bold'),foreground='#6ad5cb').pack(anchor='w')
         ttk.Label(status,textvariable=self.metrics,justify='left',wraplength=290).pack(anchor='w',pady=6)
         ttk.Label(status,text='Tracking intent (sent only in Dance)',foreground='#d9b56c').pack(anchor='w')
         ttk.Label(status,textvariable=self.intent,font=('Consolas',11)).pack(anchor='w',pady=5)
-        settings=ttk.LabelFrame(right,text='Detection and tracking',padding=10); settings.pack(fill='x',pady=10)
+        settings=ttk.LabelFrame(settings_page,text='Detection and tracking',padding=10); settings.pack(fill='x',pady=10)
         values=asdict(settings_from_config(cfg))
         self.loaded_values=values
         self.vars=dict(self.search_vars)
@@ -220,7 +239,7 @@ class FollowLabWindow:
         self.hold=tk.BooleanVar(value=bool(values['follow_and_hold']))
         ttk.Checkbutton(settings,text='Continuous Dance / Follow & Hold',variable=self.hold).grid(row=len(controls),columnspan=2,sticky='w',pady=6)
         self.edge_search_on=tk.BooleanVar(value=bool(values['edge_search_enabled']))
-        ttk.Checkbutton(settings,text='Directional search: yaw 100%',variable=self.edge_search_on).grid(row=len(controls)+1,columnspan=2,sticky='w',pady=6)
+        ttk.Checkbutton(self.search_bar,text='Directional search: yaw 100%',variable=self.edge_search_on).pack(anchor='w',pady=4)
         ttk.Button(settings,text='Apply + reset tracking',command=self.apply).grid(row=len(controls)+2,columnspan=2,sticky='ew')
         self.settings_note=tk.StringVar(value='Settings ready')
         ttk.Label(settings,textvariable=self.settings_note,foreground='#d9b56c',wraplength=285).grid(row=len(controls)+3,columnspan=2,sticky='w',pady=6)
@@ -243,7 +262,7 @@ class FollowLabWindow:
         return Settings(**data).validate()
 
     def save_config(self):
-        data={'schema_version':5,'phone_ip':self.ip.get().strip(),'codec':self.codec.get(),
+        data={'schema_version':6,'model_name':self.model.get(),'recording_profile':self.recording_profile.get(),'phone_ip':self.ip.get().strip(),'codec':self.codec.get(),
               'compute':self.compute.get(),'gpu_adapter':self.device.get(),'settings':asdict(self.settings),
               'axis_limits':self.current_axis_limits()}
         tmp=self.config_path.with_suffix('.tmp')
@@ -257,9 +276,9 @@ class FollowLabWindow:
             try: socket.inet_pton(socket.AF_INET,host)
             except OSError: socket.inet_pton(socket.AF_INET6,host)
             self.settings=self.read_settings(); self.save_config()
-            self.session=FollowSession(self.base,host,self.codec.get(),self.settings,self.record.get(),self.compute.get(),self.device.get())
+            self.session=FollowSession(self.base,host,self.codec.get(),self.settings,self.record.get(),self.compute.get(),self.device.get(),self.model.get(),self.recording_profile.get())
             self.session.start(); self.rates.clear(); self.mark_dirty()
-            self.compute_picker.configure(state='disabled'); self.device_picker.configure(state='disabled')
+            self.model_picker.configure(state='disabled');self.recording_picker.configure(state='disabled');self.compute_picker.configure(state='disabled'); self.device_picker.configure(state='disabled')
             self.connect_button.configure(state='disabled'); self.disconnect_button.configure(state='normal')
             self.notice.set('Video connected. Keyboard control connects separately using Connect keyboard.')
         except Exception as exc:
@@ -281,7 +300,7 @@ class FollowLabWindow:
             if thread.is_alive(): self.root.after(50,finished); return
             self.session=None; self.stopping=False; self.draw_key=None
             self.connect_button.configure(state='normal')
-            self.compute_picker.configure(state='readonly'); self.device_picker.configure(state='normal')
+            self.model_picker.configure(state='readonly');self.recording_picker.configure(state='readonly');self.compute_picker.configure(state='readonly'); self.device_picker.configure(state='normal')
             self.state.set('DISCONNECTED'); self.intent.set('Yaw +0.000   Up +0.000\nSide +0.000  Forward +0.000')
             self.notice.set(f'Session saved: {session.output}')
             self.canvas.delete('all'); self.last_image=None; self.last_frame=None; self.last_meta=None
@@ -476,12 +495,15 @@ class FollowLabWindow:
             toolbar=getattr(self,'control_bar',None)
             speedbar=getattr(self,'speed_bar',None)
             viewbar=getattr(self,'view_bar',None)
+            searchbar=getattr(self,'search_bar',None)
+            controls=getattr(self,'controls_tab',None)
+            notebook=getattr(self,'tabs',None)
             def inside(widget,ancestor):
                 while widget is not None:
                     if widget is ancestor: return True
                     widget=getattr(widget,'master',None)
                 return False
-            if focused is not None and (inside(focused,toolbar) or inside(focused,speedbar) or inside(focused,viewbar)):
+            if focused is not None and (inside(focused,toolbar) or inside(focused,speedbar) or inside(focused,viewbar) or inside(focused,searchbar) or inside(focused,controls) or focused is notebook):
                 self.pressed.clear()
                 if self.manual: self.manual.update(set())
                 return
@@ -495,6 +517,21 @@ class FollowLabWindow:
             except tk.TclError: pass
         try: self.focus_check_id=self.root.after_idle(check)
         except tk.TclError: pass
+
+    def apply_search(self):
+        try:
+            angle=float(self.search_vars['search_yaw_degrees'].get())
+            seconds=float(self.search_vars['edge_search_seconds'].get())
+            updated=replace(self.settings,search_yaw_degrees=angle,edge_search_seconds=seconds,
+                            edge_search_enabled=self.edge_search_on.get()).validate()
+            previous=self.settings;self.settings=updated
+            try:self.save_config()
+            except Exception:self.settings=previous;raise
+            if self.session:self.session.configure_search(angle,seconds,self.edge_search_on.get())
+            self.mark_dirty()
+            self.notice.set('Search saved; target retained. New limits apply to the next arc. 0 deg stops an active search.')
+            self.canvas.focus_set()
+        except Exception as exc:messagebox.showerror('Search settings',str(exc))
 
     def apply(self):
         try:
@@ -553,13 +590,13 @@ class FollowLabWindow:
                 age=decision.get('measurement_age_ms'); age_text='--' if age is None else f'{age:.0f} ms'
                 search=decision.get('edge_search') or {}
                 search_text=(f"Search: {search.get('angle_progress_degrees',0):.0f} / "
-                             f"{self.settings.search_yaw_degrees:g} deg | {self.settings.edge_search_seconds:g} s\n"
+                             f"{search.get('angle_degrees',self.settings.search_yaw_degrees):g} deg | {search.get('duration_seconds',self.settings.edge_search_seconds):g} s\n"
                              f"{search.get('reason','--')}\n{s.heading.status}")
                 result=s.result.get(); inference='--' if result is None else f"{result['inference_ms']:.1f} ms"
                 compute=s.model_info.get('compute',{}) if s.model_info else {}
                 compute_label=compute.get('label','loading')
                 if compute.get('fallback_reason'): compute_label+=' (GPU fallback)'
-                self.metrics.set(f"Model: {compute_label}\n"
+                self.metrics.set(f"{self.model.get()}\nModel: {compute_label}\n"
                     f"YOLO: {inference} | target age: {age_text}\n"
                     f"Track source: {decision.get('track_support','--')}\n"
                     +('Short forward continuation\n' if decision.get('prediction_forward_allowed') else '')+
@@ -592,7 +629,7 @@ class FollowLabWindow:
         recording=recorder.status() if recorder else None
         if recording:
             self.recording_status.set(f"{recording['state']} | {recording['mode']} | {recording['elapsed_seconds']:.1f}s | "
-                                      f"frames {recording['written']} | skipped {recording['dropped']}"
+                                      f"{recording.get('encoder','starting')} | {recording.get('resolution')} | {recording.get('recorded_fps',0):.1f} FPS | skipped {recording['dropped']}"
                                       +(f" | {recording['error']}" if recording['error'] else ''))
         busy=bool(recorder and recorder.thread.is_alive())
         self.capture_button.configure(text='Save' if self.capture_mode.get()=='Snapshot' else 'Stop' if busy else 'Start')

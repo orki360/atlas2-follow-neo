@@ -1,0 +1,10 @@
+{
+  "best.onnx": {
+    "sha256": "20c8821eee5eae466023f6ecc7355f408523b63ec1bb9fbb52906aa5d8345c3c",
+    "task": "detect"
+  },
+  "yolo26s_seg_best_v1.onnx": {
+    "sha256": "69611e6d6ecc2f74ee25229c7d4595ac701b1b95306adcb50a3399e616a099ee",
+    "task": "segment"
+  }
+}

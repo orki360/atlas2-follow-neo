@@ -10,13 +10,13 @@ import traceback
 ROOT=Path(__file__).resolve().parent
 
 
-def check(mode='Auto', device_id=-1):
+def check(mode='Auto', device_id=-1, model_name=None):
     import numpy as np
     import cv2, av, onnxruntime, PIL, tkinter
     from follow_neo.detector import OnnxDroneDetector
     from follow_neo import __version__
-    model=ROOT/'models'/'best.onnx';out=ROOT/'logs';out.mkdir(exist_ok=True)
-    manifest=json.loads((ROOT/'models'/'model_info.json').read_text(encoding='utf-8'))
+    from follow_neo.models import resolve_model
+    model,manifest=resolve_model(ROOT,model_name);out=ROOT/'logs';out.mkdir(exist_ok=True)
     digest=hashlib.sha256(model.read_bytes()).hexdigest()
     if digest!=manifest['sha256']: raise RuntimeError('Model checksum mismatch. Reapply the update ZIP.')
     detector=OnnxDroneDetector(model,compute_mode=mode,device_id=device_id,diagnostics_dir=out)
@@ -28,7 +28,8 @@ def check(mode='Auto', device_id=-1):
       'numpy':np.__version__,'opencv':cv2.__version__,'av':av.__version__,
       'onnxruntime':onnxruntime.__version__,'pillow':PIL.__version__,
       'tk':tkinter.TkVersion,'model_sha256':digest,'input':detector.input.shape,
-      'output':detector.output.shape,'compute':detector.compute_info,
+      'output':detector.output.shape,'outputs':[o.shape for o in detector.outputs],
+      'model':manifest,'compute':detector.compute_info,
       'recording_encoder':'libx264 available','source_resolution':[1920,1080],'blank_frame_detections':len(result['detections']),
       'warm_inference_ms':timings,'flight_commands_enabled':False}
     (out/'environment_check.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
@@ -41,8 +42,9 @@ def main():
     ap.add_argument('--check',action='store_true')
     ap.add_argument('--compute',choices=['Auto','GPU','CPU'],default='Auto')
     ap.add_argument('--device-id',type=int,default=-1)
+    ap.add_argument('--model',choices=['best.onnx','yolo26s_seg_best_v1.onnx'])
     args=ap.parse_args()
-    if args.check: check(args.compute,args.device_id);return
+    if args.check: check(args.compute,args.device_id,args.model);return
     import tkinter as tk
     from follow_neo.gui import FollowLabWindow
     root=tk.Tk();FollowLabWindow(root,ROOT);root.mainloop()

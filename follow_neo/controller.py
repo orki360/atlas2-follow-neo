@@ -43,7 +43,8 @@ class FollowController:
         if accepted: self.last_accepted=t.accepted
         self.edge_search.observe(accepted,not detections,t.confirmed,
                 t.accepted.box if accepted else None,t.snapshot(source_time),*size,
-                source_time,frame_id,settings)
+                source_time,frame_id,settings,
+                strong=bool(accepted and t.accepted.confidence>=max(settings.confidence,settings.new_track_confidence)))
         return accepted
 
     def tick(self,now,width,height,video_time,settings,heading=None):

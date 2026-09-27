@@ -98,6 +98,8 @@ class DeterministicTrackingPolicy:
                 state='TRACK' if ready else 'REACQUIRE'
                 reason='reacquire_confirmed' if ready else 'reacquire_confirming'
             if state=='TRACK':self.last=command.bounded()
+        elif search and search.get('verifying'):
+            state,reason='REACQUIRE','search_reacquire_verifying';self.hits=0
         elif search and search.get('active'):
             state,reason='DIRECTIONAL_SEARCH','directional_search';self.hits=0
         elif search and search.get('consumed'):

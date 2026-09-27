@@ -1,10 +1,7 @@
-"""Small ONNX Runtime adapter for the audited one-class YOLOv8 model.
+"""ONNX adapter: one-class YOLOv8 detection and YOLO26s segmentation.
 
-The attached model exports ``[1, 5, 8400]`` predictions and does not include
-non-maximum suppression.  This module intentionally avoids an Ultralytics
-runtime dependency and performs only deterministic preprocessing, decoding,
-and NMS.  It does not infer aircraft identity or hostile intent: class 0 is a
-generic drone candidate.
+Raw exports use xywh + score, optional 32 mask coefficients, and external NMS.
+No Ultralytics or torch dependency is needed at runtime.
 """
 
 from __future__ import annotations
@@ -66,7 +63,7 @@ def non_max_suppression(
 
 
 class OnnxDroneDetector:
-    """Load and evaluate the audited one-class YOLOv8 ONNX export."""
+    """Load either supported one-class detection or segmentation ONNX export."""
 
     def __init__(
         self,
@@ -92,7 +89,8 @@ class OnnxDroneDetector:
         from .compute import create_session
         self.session,self.compute_info=create_session(self.model_path,compute_mode,device_id,diagnostics_dir)
         self.input = self.session.get_inputs()[0]
-        self.output = self.session.get_outputs()[0]
+        self.outputs = self.session.get_outputs()
+        self.output = self.outputs[0]
         self.metadata = self.session.get_modelmeta().custom_metadata_map or {}
         self.class_names = self._class_names(self.metadata.get("names"))
         self._validate_contract()
@@ -122,9 +120,14 @@ class OnnxDroneDetector:
                 f"Unexpected Neo ONNX input {self.input.shape}; expected {expected}"
             )
         shape = list(self.output.shape)
-        if shape not in ([1, 5, 8400], [1, 8400, 5]):
+        self.segmentation = shape in ([1,37,8400],[1,8400,37])
+        if self.segmentation:
+            if (len(self.outputs)!=2 or list(self.outputs[1].shape)!=[1,32,160,160]
+                    or len(self.class_names)!=1 or self.metadata.get('end2end','False').lower()=='true'):
+                raise RuntimeError('Expected one-class raw segmentation with 32 mask coefficients and prototypes.')
+        elif shape not in ([1, 5, 8400], [1, 8400, 5]):
             raise RuntimeError(
-                f"Unexpected Neo ONNX output {shape}; expected [1,5,8400] or [1,8400,5]"
+                f"Unsupported ONNX output {shape}; expected one-class detect (5 channels) or segment (37 channels)"
             )
 
     def _prepare(self, frame: np.ndarray) -> tuple[np.ndarray, dict[str, float]]:
@@ -162,14 +165,14 @@ class OnnxDroneDetector:
         if values.ndim != 3 or values.shape[0] != 1:
             raise RuntimeError(f"Unexpected Neo inference result: {values.shape}")
         rows = values[0]
-        if rows.shape[0] == 5:
+        if rows.shape[0] in (5,37):
             rows = rows.T
-        if rows.ndim != 2 or rows.shape[1] != 5:
+        if rows.ndim != 2 or rows.shape[1] not in (5,37):
             raise RuntimeError(f"Unexpected decoded Neo result: {rows.shape}")
         return rows
 
     def postprocess(
-        self, raw_output: np.ndarray, transform: dict[str, float]
+        self, raw_output: np.ndarray, transform: dict[str, float], prototypes=None
     ) -> list[dict[str, Any]]:
         rows = self._rows(raw_output)
         scores = rows[:, 4]
@@ -213,20 +216,51 @@ class OnnxDroneDetector:
                     "model_class_name": self.class_names.get(0, "drone"),
                 }
             )
+            # Masks are display-only. Keep the detector BBOX as the tracker /
+            # distance contract; never replace its width with polygon area.
+            if prototypes is not None and rows.shape[1]==37 and len(detections)<=3:
+                detections[-1]['segments']=self._segments(rows[index,5:],prototypes,boxes[index],transform)
         return detections
+
+    @staticmethod
+    def _segments(coefficients,prototypes,box,transform):
+        import cv2
+        proto=np.asarray(prototypes,dtype=np.float32)
+        if proto.shape==(1,32,160,160):proto=proto[0]
+        if proto.shape!=(32,160,160) or not np.isfinite(proto).all():
+            raise RuntimeError('Invalid segmentation prototypes')
+        # Threshold logits at zero (sigmoid > .5), only within the kept box.
+        logits=np.einsum('c,chw->hw',coefficients,proto,optimize=False)
+        mask=np.zeros((160,160),np.uint8)
+        x1,y1,x2,y2=box/4
+        xs=np.arange(160)[None,:];ys=np.arange(160)[:,None]
+        mask[(logits>0)&(xs>=x1)&(xs<x2)&(ys>=y1)&(ys<y2)]=255
+        contours,_=cv2.findContours(mask,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+        result=[]
+        for contour in sorted(contours,key=cv2.contourArea,reverse=True)[:4]:
+            if cv2.contourArea(contour)<1:continue
+            points=cv2.approxPolyDP(contour,.5,True).reshape(-1,2).astype(np.float32)*4
+            if len(points)<3:continue
+            if len(points)>128:points=points[::int(np.ceil(len(points)/128))]
+            points[:,0]=np.clip((points[:,0]-transform['pad_x'])/transform['scale'],0,transform['source_w']-1)
+            points[:,1]=np.clip((points[:,1]-transform['pad_y'])/transform['scale'],0,transform['source_h']-1)
+            result.append(points.tolist())
+        return result
 
     def detect(self, frame: np.ndarray) -> dict[str, Any]:
         started = time.perf_counter()
         tensor, transform = self._prepare(frame)
         prepared = time.perf_counter()
-        raw = self.session.run([self.output.name], {self.input.name: tensor})[0]
+        outputs = self.session.run([o.name for o in self.outputs], {self.input.name: tensor})
+        raw=outputs[0]
         inferred = time.perf_counter()
-        detections = self.postprocess(raw, transform)
+        detections = self.postprocess(raw, transform,outputs[1] if self.segmentation else None)
         finished = time.perf_counter()
         return {
             "detections": detections,
             "preprocess_ms": (prepared - started) * 1000.0,
             "inference_ms": (inferred - prepared) * 1000.0,
             "postprocess_ms": (finished - inferred) * 1000.0,
+            "total_ms": (finished-started)*1000.0,
             "providers": self.session.get_providers(),
         }

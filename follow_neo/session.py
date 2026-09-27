@@ -1,5 +1,5 @@
 """Independent capture, inference and control-preview scheduling. No HTTP server."""
-from dataclasses import asdict
+from dataclasses import asdict,replace
 from datetime import datetime
 from pathlib import Path
 import json
@@ -17,6 +17,7 @@ from . import __version__
 from .prediction import continuation_threshold
 from .cadence import FrameRateGate
 from .telemetry import HeadingReceiver
+from .models import resolve_model,DEFAULT_MODEL
 
 
 class SessionLog:
@@ -49,8 +50,11 @@ class SessionLog:
 
 
 class FollowSession:
-    def __init__(self,root,host,codec='h264',settings=None,record_raw=False,compute_mode='Auto',device_id=-1):
+    def __init__(self,root,host,codec='h264',settings=None,record_raw=False,compute_mode='Auto',device_id=-1,
+                 model_name=DEFAULT_MODEL,recording_profile='Auto'):
         self.root=Path(root); self.settings=(settings or Settings()).validate()
+        self.model_path,self.model_manifest=resolve_model(self.root,model_name)
+        self.recording_profile=recording_profile
         self.compute_mode=compute_mode; self.device_id=device_id; self.recorder=None
         self.recorder_lock=threading.Lock(); self.generation=0
         self.settings_lock=threading.Lock(); self.stop_event=threading.Event()
@@ -63,6 +67,7 @@ class FollowSession:
         self.log=SessionLog(self.output/'events.jsonl')
         self.log.write('session_start',{'version':__version__,'host':host,'port':9999,
              'codec':codec,'compute_requested':compute_mode,'device_id':device_id,'settings':asdict(self.settings),
+             'model':self.model_manifest,'recording_profile':recording_profile,
              'flight_control':'explicit_manual_or_dance_enable_required',
              'timestamp_origin':'local_decoder_monotonic_not_camera_exposure'})
         raw_path=self.output/f'video.{codec}' if record_raw else None
@@ -93,12 +98,21 @@ class FollowSession:
         with self.settings_lock: self.generation+=1
         self.reset_event.set()
 
+    def configure_search(self,angle,seconds,enabled):
+        # Search settings do not change the detector, tracker or distance state.
+        with self.settings_lock:
+            self.settings=replace(self.settings,search_yaw_degrees=float(angle),
+                edge_search_seconds=float(seconds),edge_search_enabled=bool(enabled)).validate()
+            saved=asdict(self.settings)
+        self.log.write('search_settings',{'settings':saved,'tracking_reset':False,
+            'active_arc_policy':'existing arc keeps its original budget; zero/disabled cancels'})
+
     def start_recording(self,mode):
         if self.receiver.state!='STREAMING': raise RuntimeError('Connect and wait for live video first.')
         with self.recorder_lock:
             if self.recorder and self.recorder.thread.is_alive(): raise RuntimeError('Wait for the previous recording to finish.')
             if self.recorder: self.log.write('recording_end',self.recorder.status())
-            self.recorder=VideoRecorder(self.output,mode)
+            self.recorder=VideoRecorder(self.output,mode,profile=self.recording_profile,on_event=self.log.write)
         self.log.write('recording_start',self.recorder.status())
 
     def stop_recording(self):
@@ -111,9 +125,10 @@ class FollowSession:
 
     def _infer(self):
         try:
-            detector=OnnxDroneDetector(self.root/'models'/'best.onnx',cpu_threads=2,
+            detector=OnnxDroneDetector(self.model_path,cpu_threads=2,
                         compute_mode=self.compute_mode,device_id=self.device_id,diagnostics_dir=self.output)
             self.model_info={'input':detector.input.shape,'output':detector.output.shape,
+                             'outputs':[o.shape for o in detector.outputs],'model':self.model_manifest,
                              'providers':detector.session.get_providers(),
                              'class_names':detector.class_names,'compute':detector.compute_info}
             self.log.write('model_ready',self.model_info)
@@ -184,7 +199,8 @@ class FollowSession:
                     if result:
                         payload.update(result_frame_id=result['frame'].frame_id,
                           decoded_at=result['frame'].decoded_at,inference_ms=result['inference_ms'],
-                          preprocess_ms=result['preprocess_ms'],postprocess_ms=result['postprocess_ms'],detections=result['detections'],
+                          preprocess_ms=result['preprocess_ms'],postprocess_ms=result['postprocess_ms'],
+                          detections=[{k:v for k,v in d.items() if k!='segments'} for d in result['detections']],
                           result_ready_at=result['completed_at'],
                           result_to_control_ms=max(0.,now-result['completed_at'])*1000)
                     self.log.write('observation',payload); last_state=key; last_log=now

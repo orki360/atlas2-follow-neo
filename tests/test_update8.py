@@ -227,9 +227,11 @@ class SessionSchedulingTests(unittest.TestCase):
     def run_pipeline(self,reconfigure):
         """Real worker threads with a controlled detector; never open a socket."""
         temp=tempfile.TemporaryDirectory();self.addCleanup(temp.cleanup)
-        session=FollowSession(temp.name,'127.0.0.1')
+        with patch('follow_neo.session.resolve_model',return_value=(Path(temp.name)/'model.onnx',{'name':'test model'})):
+            session=FollowSession(temp.name,'127.0.0.1')
         entered=threading.Event();release=threading.Event();seen=[];published=[]
         detector=Mock();detector.input.shape=[1,3,640,640];detector.output.shape=[1,5,8400]
+        detector.outputs=[detector.output]
         detector.session.get_providers.return_value=['TestProvider']
         detector.class_names=['drone'];detector.compute_info={'label':'test double'}
         def detect(image):
