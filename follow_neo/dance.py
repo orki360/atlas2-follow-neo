@@ -1,6 +1,7 @@
 """Authorization gate for the existing NEO centering / spacing intent."""
 import math
 from .edge_search import yaw_override
+from .recovery_search import scan_command
 from .prediction import (COAST_SECONDS, COAST_YAW, COAST_VERTICAL, STABLE_FORWARD_SECONDS,
                          fade, forward_fade)
 
@@ -13,12 +14,21 @@ def dance_command(decision,now,started):
     stamp=decision.get('prediction_time')
     if not isinstance(stamp,(int,float)) or not math.isfinite(stamp):return ZERO,'Invalid decision time'
     if stamp<=started or not 0<=now-stamp<=.20:return ZERO,'Waiting for a fresh decision'
+    measurement_time=decision.get('measurement_time')
+    if measurement_time is not None and measurement_time<=started:
+        return ZERO,'Waiting for a measurement after Dance started'
     state=decision.get('state');phase=decision.get('spacing_phase')
     if decision.get('stale') or state in ('ERROR','WAIT_VIDEO','ABORT_HOVER'):
         return ZERO,'Waiting for current video / detection'
     if phase in ('STOPPED','SEQUENCE_DONE'):return ZERO,'Sequence stopped: explicit one-shot mode'
+    if decision.get('candidate_pending') and not decision.get('accepted'):
+        return ZERO,'Hover / verifying YOLO candidate'
     turn=yaw_override(decision,now,started)
     if turn:return (turn,0.,0.,0.),'Search / '+('RIGHT' if turn>0 else 'LEFT')+' / yaw 100%'
+    search=decision.get('edge_search') or {}
+    if state=='DIRECTIONAL_SEARCH' and search.get('phase')=='SCAN':
+        turn=scan_command(decision,now,started)
+        return (turn,0.,0.,0.),'Scan / '+('RIGHT' if turn>0 else 'LEFT' if turn<0 else 'PAUSED')+' / normal yaw limit'
     if state=='DIRECTIONAL_SEARCH':return ZERO,'Search held: heading, angle or time contract expired'
     if state in ('HOVER_WAIT','WAIT_TARGET','SEARCH'):
         return ZERO,'Hover / '+str(decision.get('reason','waiting_target'))

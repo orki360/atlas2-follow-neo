@@ -33,7 +33,8 @@ class FocusTransitionTests(unittest.TestCase):
         w.toggle_dance()  # Mouse-up invokes the button.
         self.assertEqual(w.manual.mode,'DANCE')
         self.assertEqual(w.dance_rejection,'')
-        w.session.reset.assert_called_once()
+        w.session.restart_control.assert_called_once()
+        w.session.reset.assert_not_called()
 
     def test_dance_survives_focus_to_stop_button(self):
         w=self.window; w.manual.start_dance()

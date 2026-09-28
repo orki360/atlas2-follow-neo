@@ -113,6 +113,12 @@ class EdgeYawSearch:
 
 def yaw_override(decision,now,dance_started=None):
     search=decision.get('edge_search') or {}
+    if search.get('phase') not in (None,'BOOST'):return 0.
+    if search.get('phase')=='BOOST':
+        limit=search.get('boost_angle_degrees')
+        if not isinstance(limit,(int,float)) or not math.isfinite(limit) or not 0<limit<=90:return 0.
+        start=search.get('started')
+        if not isinstance(start,(int,float)) or not 0<=now-start<.35:return 0.
     if search.get('active') is not True:return 0.
     names=('started','until','source_time','heading_time','angle_degrees','angle_progress_degrees','duration_seconds')
     if not all(isinstance(search.get(k),(int,float)) and math.isfinite(search[k]) for k in names):return 0.
@@ -124,7 +130,7 @@ def yaw_override(decision,now,dance_started=None):
         or abs(end-start-search['duration_seconds'])>1e-6
         or not 0<=start-source<=search['duration_seconds']
         or not 0<search['angle_degrees']<=180
-        or not 0<=search['angle_progress_degrees']<search['angle_degrees']
+        or not 0<=search['angle_progress_degrees']<search.get('boost_angle_degrees',search['angle_degrees'])
         or not 0<=now-search['heading_time']<=HEADING_MAX_AGE
         or dance_started is not None and start<dance_started
         or decision.get('accepted') or decision.get('stale')

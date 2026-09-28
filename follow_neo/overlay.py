@@ -71,8 +71,24 @@ def render_bundle(frame,analysis,decision,mode,stale_seconds=.75,now=None,output
         support=bound.get('track_support','yolo') if bound else 'none'
         predicted=support=='prediction'
         age=max(0,(chosen.decoded_at-bound['measurement_time'])*1000) if bound and bound.get('measurement_time') is not None else None
-        label=(f'PREDICTED {age:.0f} ms / NO YOLO' if predicted else
+        candidates=bound.get('raw_detections',[]) if bound else []
+        candidate_time=bound.get('raw_detection_time') if bound else None
+        fresh_candidates=(candidate_time is not None and 0<=chosen.decoded_at-candidate_time<=.25 and now-candidate_time<=.25)
+        if not fresh_candidates:candidates=[]
+        selected=bound.get('selected_measurement_box') if bound else None
+        for d in candidates:
+            measured=dict(zip(('x1','y1','x2','y2'),d['box']))
+            matched=bool(selected and np.allclose(d['box'],selected,atol=.01))
+            draw_box(image,measured,(60,220,80) if matched else (0,180,255),
+                     f"{'MEASURED' if matched else 'CANDIDATE'} {d['confidence']:.2f}",scale=scale)
+        metadata['detections']=candidates
+        label=(f"PREDICTED {age:.0f} ms / {'YOLO UNMATCHED' if candidates else 'NO DETECTION'}" if predicted else
                'WEAK YOLO + KALMAN' if support=='weak_yolo' else 'YOLO + KALMAN')
+        tracking=bound.get('tracking',{}) if bound else {}
+        if tracking.get('backend')=='BoT-SORT':
+            label=label.replace('KALMAN','BoT-SORT')
+            if tracking.get('target_id') is not None:
+                label+=f" target {tracking.get('logical_target_id',tracking['target_id'])} / BoT {tracking['target_id']}"
         if not predicted and confidence is not None: label+=f' {confidence:.2f}'
         if box: draw_box(image,box,BLUE,label,dashed=predicted,scale=scale)
         metadata.update(track_support=support,measurement_age_ms=age)

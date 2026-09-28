@@ -5,6 +5,7 @@ import time
 import math
 from .dance import dance_command, DanceSmoother
 from .edge_search import yaw_override
+from .control_transport import ControlChannel
 
 
 MOVEMENT_KEYS = frozenset(('w', 's', 'a', 'd', 'up', 'down', 'left', 'right'))
@@ -127,27 +128,22 @@ class ManualControl:
     def _run(self):
         sock = None
         authority = False
-        buffer = b''
+        channel = None
+        failure = None
 
-        def command(text):
-            nonlocal buffer
-            sock.sendall((text + '\r\n').encode('ascii'))
-            deadline = time.monotonic() + 2.
-            while b'\n' not in buffer:
-                sock.settimeout(max(.001, deadline - time.monotonic()))
-                chunk = sock.recv(4096)
-                if not chunk:
-                    raise ConnectionError('Control server disconnected')
-                buffer += chunk
-                if len(buffer) > 8192 or time.monotonic() > deadline:
-                    raise TimeoutError('Control reply timed out')
-            reply, buffer = buffer.split(b'\n', 1)
-            reply = reply.decode('utf-8', errors='replace').strip()
-            if reply != 'success':
-                raise RuntimeError(reply)
+        def guard(motion_keys=None):
+            with self.lock:
+                if self.stop_event.is_set():return 'control stopped'
+                if not self.wanted:return 'control released'
+                if time.monotonic()-self.updated>.35:return 'UI heartbeat lost'
+                if motion_keys is not None and set(motion_keys)!=self.keys:
+                    return 'movement keys changed while acknowledgement was pending'
+            return None
 
         try:
             sock = self.connector((self.host, 9998), timeout=2.)
+            channel = ControlChannel(sock,guard,self.on_event)
+            command = channel.command
             self.status = 'Control connected | E: enable keyboard'
             while not self.stop_event.is_set():
                 # Fetch the latest thread-safe decision independently of costly
@@ -162,6 +158,7 @@ class ManualControl:
                         self.action = None
                         self.dance_status = 'Control released: UI heartbeat lost'
                     wanted = self.wanted
+                    command_keys = frozenset(self.keys)
                     values = movement(self.keys)
                     mode = self.mode
                     selected_mode = self.mode
@@ -192,6 +189,8 @@ class ManualControl:
                             # Explicit user-requested exception: yaw only at
                             # 100%, for this timed edge search, not normal Dance.
                             self.smoother.reset();shaped_values=raw_values
+                        elif gate_reason.startswith('Scan /'):
+                            self.smoother.reset();shaped_values=raw_values
                         elif phase=='BRAKE' and not self.motion_hold and gate_reason.startswith('Tracking /'):
                             self.smoother.reset(); shaped_values=raw_values
                         else:
@@ -216,19 +215,22 @@ class ManualControl:
                     action, self.action = self.action, None
                 if wanted and not authority:
                     authority = True  # Also release if the enable reply is lost.
+                    command('rc 0 0 0 0')
                     command('enable')
+                    command('rc 0 0 0 0')
                     self.enabled = True
                     self.on_event('control_enabled', {'host': self.host})
                     self.status = 'KEYBOARD ACTIVE | Q / Esc: release'
                     continue  # Recheck focus/stop before sending any movement.
                 if authority and not wanted:
-                    command('rc 0 0 0 0')
-                    command('disable')
+                    command('rc 0 0 0 0',interruptible=False)
+                    command('disable',interruptible=False)
                     authority = self.enabled = False
                     self.on_event('control_released', {})
                     self.status = 'Control released | E: enable keyboard'
                 if authority and wanted:
-                    command('rc ' + ' '.join(f'{value:.4f}' for value in values))
+                    command('rc ' + ' '.join(f'{value:.4f}' for value in values),
+                            motion_keys=command_keys if mode=='MANUAL' and any(values) else None)
                     self.on_event('flight_command', {'mode': mode, 'command': 'rc',
                         'selected_mode': selected_mode,
                         'axis_limits': dict(zip(AXES, limits)),
@@ -260,17 +262,24 @@ class ManualControl:
                 self.stop_event.wait(.05)
             self.status = 'Control disconnected'
         except Exception as exc:
+            failure=str(exc)
             self.status = f'CONTROL ERROR: {exc}. Disconnect and reconnect control.'
             self.on_event('control_error', {'error': str(exc)})
         finally:
             self.enabled = False
             self.release()
             if sock:
-                if authority:
-                    try:
-                        command('rc 0 0 0 0')
-                        command('disable')
-                        self.status += ' | Release acknowledged'
-                    except (OSError,ConnectionError,TimeoutError,RuntimeError):
-                        self.status += ' | Release unconfirmed; use remote controller.'
+                if authority and channel is not None:
+                    if failure or channel.pending:
+                        channel.stop_unconfirmed(failure or 'pending acknowledgement')
+                        self.status += ' | STOP UNCONFIRMED; use physical controller.'
+                    else:
+                        try:
+                            channel.command('rc 0 0 0 0',interruptible=False)
+                            channel.command('disable',interruptible=False)
+                            self.on_event('control_released',{'server_acknowledged':True})
+                            self.status += ' | Release acknowledged'
+                        except (OSError,RuntimeError) as exc:
+                            channel.stop_unconfirmed(str(exc))
+                            self.status += ' | STOP UNCONFIRMED; use physical controller.'
                 sock.close()

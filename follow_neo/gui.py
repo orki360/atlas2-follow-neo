@@ -14,6 +14,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import cv2
 from PIL import Image, ImageTk
+from . import __version__
 from .types import Settings, settings_from_config
 from .session import FollowSession
 from .overlay import render_bundle
@@ -24,7 +25,15 @@ from .control_status import control_indicator
 
 # Windows keeps these virtual-key codes stable even when the active keyboard
 # layout produces Hebrew characters. Tk's keysym changes with the layout.
-WINDOWS_PHYSICAL_KEYS={65:'a',68:'d',69:'e',70:'f',81:'q',82:'r',83:'s',87:'w',88:'x'}
+WINDOWS_PHYSICAL_KEYS={37:'left',38:'up',39:'right',40:'down',65:'a',68:'d',69:'e',70:'f',81:'q',82:'r',83:'s',87:'w',88:'x'}
+
+
+def physical_movement_keys(keys):
+    """Verify held Windows keys even if Tk missed a release event."""
+    import ctypes
+    get_state=ctypes.windll.user32.GetAsyncKeyState
+    return {key for code,key in WINDOWS_PHYSICAL_KEYS.items()
+            if key in keys and key in MOVEMENT_KEYS and get_state(code)&0x8000}
 
 
 def normalized_event_key(event,platform=None):
@@ -54,6 +63,7 @@ class FollowLabWindow:
     def __init__(self,root,base):
         self.root=root; self.base=Path(base); self.session=None; self.stopping=False
         self.manual=None; self.pressed=set(); self.key_releases={}
+        self.key_state_reader=physical_movement_keys if sys.platform=='win32' else None
         self.dance_rejection=''; self.last_control_indicator=None
         self.dance_selected=False; self.dance_terminal_seen=False
         self.closing=False; self.focus_check_id=None
@@ -63,7 +73,7 @@ class FollowLabWindow:
         if self.config_path.exists():
             try: cfg=json.loads(self.config_path.read_text(encoding='utf-8'))
             except (OSError,ValueError): pass
-        self.root.title('ATLAS2 Follow NEO | Live Perception Lab v0.12.0 - Update 10')
+        self.root.title(f'ATLAS2 Follow NEO | Version {__version__} - BoT-SORT')
         self.root.geometry('1440x880'); self.root.minsize(1200,760)
         self.root.configure(bg='#101820')
         self.root.protocol('WM_DELETE_WINDOW',self.close)
@@ -79,7 +89,10 @@ class FollowLabWindow:
         style.configure('Header.TLabel',font=('Segoe UI',18,'bold'),background='#101820')
         top=ttk.Frame(root,padding=(12,4)); top.pack(fill='x')
         ttk.Label(top,text='ATLAS2  /  FOLLOW NEO',style='Header.TLabel').pack(side='left')
-        ttk.Label(top,text='NEO DANCE + MANUAL KEYBOARD',foreground='#6ad5cb').pack(side='right')
+        self.version_label=ttk.Label(top,text=f'v{__version__}',foreground='#6ad5cb',
+                                     font=('Segoe UI',12,'bold'))
+        self.version_label.pack(side='left',padx=(16,0))
+        ttk.Label(top,text='BoT-SORT  |  NEO DANCE + MANUAL KEYBOARD',foreground='#6ad5cb').pack(side='right')
         bar=ttk.Frame(root,padding=(12,4)); bar.pack(fill='x')
         ttk.Label(bar,text='Phone IP').pack(side='left')
         self.ip=tk.StringVar(value=cfg.get('phone_ip',''))
@@ -201,9 +214,9 @@ class FollowLabWindow:
             exact.bind('<FocusOut>',lambda event,selected=axis:self.change_axis_speed(
                 selected,self.axis_entry_vars[selected].get()))
             ttk.Label(row,textvariable=self.axis_limit_labels[axis],width=7).pack(side='left',padx=(3,0))
-        ttk.Label(self.speed_bar,text='Normal caps\nSearch: yaw 100%',foreground='#8cbbb8').pack(anchor='w',pady=3)
+        ttk.Label(self.speed_bar,text='Normal caps for tracking / scan\nBrief edge catch-up: yaw 100%',foreground='#8cbbb8').pack(anchor='w',pady=3)
         self.search_bar=ttk.LabelFrame(controls_page,text='Search after target loss',padding=8);self.search_bar.pack(fill='x',pady=8)
-        for label,key,lo,hi,step in (('Search YAW (deg)','search_yaw_degrees',0,180,5),
+        for label,key,lo,hi,step in (('Total scan angle (deg)','search_yaw_degrees',0,180,5),
                                      ('Search time (s)','edge_search_seconds',2,10,.5)):
             row=ttk.Frame(self.search_bar);row.pack(fill='x',pady=3)
             ttk.Label(row,text=label).pack(side='left',padx=(0,8))
@@ -212,7 +225,7 @@ class FollowLabWindow:
         ttk.Button(self.search_bar,text='Apply search',command=self.apply_search).pack(fill='x',pady=5)
         ttk.Label(self.search_bar,text='One directional arc; angle OR time limit.\n0 deg disables turning. Heading: TCP 9997.',
                   foreground='#8cbbb8',wraplength=300).pack(anchor='w')
-        ttk.Label(controls_page,text='W/S: up/down   A/D: yaw\nArrows: forward/back/left/right\nSearch overrides yaw only to 100%.',wraplength=300).pack(anchor='w',pady=6)
+        ttk.Label(controls_page,text='W/S: up/down   A/D: yaw\nArrows: forward/back/left/right\n20 deg = 10 deg each side.\nBrief edge catch-up uses 100% yaw; scanning uses the normal yaw cap.',wraplength=300).pack(anchor='w',pady=6)
         self.state=tk.StringVar(value='DISCONNECTED')
         self.metrics=tk.StringVar(value='Model: '+self.model.get()+' | waiting')
         self.intent=tk.StringVar(value='Yaw +0.000   Up +0.000\nSide +0.000  Forward +0.000')
@@ -229,6 +242,7 @@ class FollowLabWindow:
                   ('NMS IoU','nms_iou',.05,.95,.05),('Video processing FPS','video_fps',1,60,1),
                   ('Inference target FPS','inference_fps',1,60,1),
                   ('Result stale (seconds)','stale_seconds',.1,2,.05),
+                  ('Loss grace (seconds)','search_grace_seconds',.30,1.,.05),
                   ('Stop BBOX width %','stop_width',1,50,2),('Yaw limit %','yaw_limit',10,100,5),
                   ('Vertical limit %','vertical_limit',10,100,5),('Forward limit %','forward_limit',0,100,5)]
         self.percent={'stop_width','yaw_limit','vertical_limit','forward_limit','search_yaw'}
@@ -239,11 +253,11 @@ class FollowLabWindow:
         self.hold=tk.BooleanVar(value=bool(values['follow_and_hold']))
         ttk.Checkbutton(settings,text='Continuous Dance / Follow & Hold',variable=self.hold).grid(row=len(controls),columnspan=2,sticky='w',pady=6)
         self.edge_search_on=tk.BooleanVar(value=bool(values['edge_search_enabled']))
-        ttk.Checkbutton(self.search_bar,text='Directional search: yaw 100%',variable=self.edge_search_on).pack(anchor='w',pady=4)
-        ttk.Button(settings,text='Apply + reset tracking',command=self.apply).grid(row=len(controls)+2,columnspan=2,sticky='ew')
+        ttk.Checkbutton(self.search_bar,text='Lost-target recovery: BOOST / scan',variable=self.edge_search_on).pack(anchor='w',pady=4)
+        ttk.Button(settings,text='Apply / keep target',command=self.apply).grid(row=len(controls)+2,columnspan=2,sticky='ew')
         self.settings_note=tk.StringVar(value='Settings ready')
         ttk.Label(settings,textvariable=self.settings_note,foreground='#d9b56c',wraplength=285).grid(row=len(controls)+3,columnspan=2,sticky='w',pady=6)
-        ttk.Label(settings,text='Search ends at the angle OR time limit.\n0 deg disables the turn. Heading uses TCP 9997.\nTarget loss keeps Dance ON; reacquisition is automatic.',
+        ttk.Label(settings,text='Scan reverses at each angle boundary until timeout.\n0 deg disables recovery. Heading uses TCP 9997.\nTarget loss keeps Dance ON; reacquisition is automatic.',
                   foreground='#8cbbb8',wraplength=285).grid(row=len(controls)+4,columnspan=2,sticky='w')
         ttk.Button(right,text='Reset target / spacing',command=self.reset).pack(fill='x',pady=2)
         ttk.Button(right,text='Open session logs',command=self.open_logs).pack(fill='x',pady=2)
@@ -329,6 +343,7 @@ class FollowLabWindow:
     def toggle_manual(self):
         if self.manual and self.manual.thread.is_alive():
             self.stop_manual(); return
+        self.clear_keyboard_input('control_reconnect')
         host=self.session.receiver.host if self.session else self.ip.get().strip()
         try:
             try: socket.inet_pton(socket.AF_INET,host)
@@ -342,7 +357,7 @@ class FollowLabWindow:
         self.canvas.focus_set()
 
     def log_control(self,event,data):
-        session=self.session
+        session=getattr(self,'session',None)
         if session: session.record_control(event,data)
 
     def toggle_dance(self):
@@ -351,7 +366,7 @@ class FollowLabWindow:
         self.dance_terminal_seen=False
         self.pressed.clear()
         if self.dance_selected:
-            if self.session: self.session.reset()
+            if self.session: self.session.restart_control()
             if self.manual: self.manual.start_dance()
             self.notice.set('Dance selected. Keyboard overrides while held; release keys to resume. Q / Esc releases control.')
         else:
@@ -440,11 +455,11 @@ class FollowLabWindow:
     def enable_manual(self):
         self.dance_rejection=''
         if self.manual and self.manual.thread.is_alive() and not self.manual.stop_event.is_set():
-            self.pressed.clear(); self.manual.update(set()); self.manual.enable()
+            self.clear_keyboard_input('control_enable'); self.manual.enable()
             self.canvas.focus_set()
 
     def release_manual(self):
-        self.pressed.clear()
+        self.clear_keyboard_input('control_release')
         if self.manual: self.manual.release()
 
     def stop_manual(self):
@@ -456,6 +471,32 @@ class FollowLabWindow:
             self.notice.set('Enable keyboard control (E) before takeoff or landing.')
         self.canvas.focus_set()
 
+    def clear_keyboard_input(self,reason):
+        pending_releases=getattr(self,'key_releases',{})
+        for pending in pending_releases.values():
+            try:self.root.after_cancel(pending)
+            except tk.TclError:pass
+        pending_releases.clear()
+        previous=sorted(self.pressed & MOVEMENT_KEYS)
+        self.pressed.clear()
+        if self.manual:self.manual.update(set())
+        if previous:self.log_control('keyboard_cleared',{'reason':reason,'keys':previous})
+
+    def reconcile_keyboard(self):
+        reader=getattr(self,'key_state_reader',None)
+        held=self.pressed & MOVEMENT_KEYS
+        if not held or reader is None:return
+        try:actual=reader(held)
+        except (OSError,AttributeError):
+            self.release_manual()
+            self.notice.set('Keyboard state unavailable. Control released; Enable (E) to resume.')
+            return
+        released=held-actual
+        if released:
+            self.pressed.difference_update(released)
+            if self.manual:self.manual.update(self.pressed & MOVEMENT_KEYS)
+            self.log_control('keyboard_reconciled',{'released_keys':sorted(released)})
+
     def key_press(self,event):
         key=normalized_event_key(event)
         if key in ('q','escape'):
@@ -466,6 +507,7 @@ class FollowLabWindow:
         if pending: self.root.after_cancel(pending)
         if key in self.pressed: return 'break'
         self.pressed.add(key)
+        if key in MOVEMENT_KEYS:self.log_control('keyboard_press',{'key':key})
         if key in MOVEMENT_KEYS and self.manual:
             self.manual.update(self.pressed & MOVEMENT_KEYS)
         if key=='e':
@@ -482,7 +524,9 @@ class FollowLabWindow:
             if self.manual: self.manual.update(self.pressed & MOVEMENT_KEYS)
         pending=self.key_releases.pop(key,None)
         if pending: self.root.after_cancel(pending)
-        self.key_releases[key]=self.root.after_idle(released)
+        self.log_control('keyboard_release',{'key':key})
+        if sys.platform=='win32':released()
+        else:self.key_releases[key]=self.root.after_idle(released)
 
     def focus_out(self,event):
         # Tk buttons take focus on mouse-down, BEFORE their command on mouse-up.
@@ -529,7 +573,7 @@ class FollowLabWindow:
             except Exception:self.settings=previous;raise
             if self.session:self.session.configure_search(angle,seconds,self.edge_search_on.get())
             self.mark_dirty()
-            self.notice.set('Search saved; target retained. New limits apply to the next arc. 0 deg stops an active search.')
+            self.notice.set('Scan saved; target retained. Total angle is split equally left/right. New limits apply to the next loss; 0 deg stops recovery.')
             self.canvas.focus_set()
         except Exception as exc:messagebox.showerror('Search settings',str(exc))
 
@@ -538,7 +582,7 @@ class FollowLabWindow:
             self.settings=self.read_settings(); self.save_config()
             if self.session: self.session.configure(self.settings)
             self.mark_dirty()
-            self.notice.set('Settings saved. Tracking and spacing reset; waiting for a NEW measurement.')
+            self.notice.set('Settings saved. Target retained; control and spacing restarted. Waiting for a new measurement.')
         except Exception as exc: messagebox.showerror('Settings',str(exc))
 
     def reset(self):
@@ -569,6 +613,9 @@ class FollowLabWindow:
         return None
 
     def refresh(self):
+        self.reconcile_keyboard()
+        if self.manual and not self.manual.thread.is_alive() and self.pressed:
+            self.clear_keyboard_input('control_connection_lost')
         if self.manual:
             decision=self.dance_decision()
             if self.finish_terminal_dance(decision): decision=None
@@ -589,8 +636,9 @@ class FollowLabWindow:
             if decision:
                 age=decision.get('measurement_age_ms'); age_text='--' if age is None else f'{age:.0f} ms'
                 search=decision.get('edge_search') or {}
-                search_text=(f"Search: {search.get('angle_progress_degrees',0):.0f} / "
-                             f"{search.get('angle_degrees',self.settings.search_yaw_degrees):g} deg | {search.get('duration_seconds',self.settings.edge_search_seconds):g} s\n"
+                search_text=(f"Recovery: {search.get('phase','--')} | "
+                             f"offset {search.get('scan_offset_degrees',0):+.1f} deg\n"
+                             f"Total scan {search.get('angle_degrees',self.settings.search_yaw_degrees):g} deg | {search.get('duration_seconds',self.settings.edge_search_seconds):g} s\n"
                              f"{search.get('reason','--')}\n{s.heading.status}")
                 result=s.result.get(); inference='--' if result is None else f"{result['inference_ms']:.1f} ms"
                 compute=s.model_info.get('compute',{}) if s.model_info else {}
@@ -599,6 +647,8 @@ class FollowLabWindow:
                 self.metrics.set(f"{self.model.get()}\nModel: {compute_label}\n"
                     f"YOLO: {inference} | target age: {age_text}\n"
                     f"Track source: {decision.get('track_support','--')}\n"
+                    f"Target {decision.get('tracking',{}).get('logical_target_id','--')} / BoT ID {decision.get('tracking',{}).get('target_id','--')}\n"
+                    f"{decision.get('tracking',{}).get('association_reason','')}\n"
                     +('Short forward continuation\n' if decision.get('prediction_forward_allowed') else '')+
                     f"Spacing: {decision.get('spacing_phase','--')}\n"
                     f"Width: {100*decision.get('raw_width_ratio',0):.1f}%\n"

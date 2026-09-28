@@ -1,0 +1,33 @@
+"""Inspect actual Tk widgets without connecting to a phone or aircraft."""
+from pathlib import Path
+import sys
+import tempfile
+import tkinter as tk
+
+sys.path.insert(0,str(Path(sys.argv[1]).resolve()))
+from VERSION import VERSION
+from follow_neo.gui import FollowLabWindow
+
+with tempfile.TemporaryDirectory() as folder:
+    root=tk.Tk()
+    root.withdraw()
+    try:
+        window=FollowLabWindow(root,Path(folder))
+        root.update_idletasks()
+        assert VERSION=='11.1'
+        assert window.version_label.cget('text')=='v11.1'
+        assert window.session is None and window.manual is None
+        assert callable(window.key_state_reader)
+        texts=[]
+        def inspect(widget):
+            try:texts.append(str(widget.cget('text')))
+            except tk.TclError:pass
+            for child in widget.winfo_children():inspect(child)
+        inspect(root)
+        assert any('total' in text.lower() and 'scan' in text.lower() for text in texts),texts
+        assert 'Apply / keep target' in texts
+        assert 'Loss grace (seconds)' in texts
+        assert float(window.vars['search_grace_seconds'].get())==.45
+        print('PASS: actual Tk GUI initializes; version 11.1 and total scan angle labels; physical keyboard reader enabled; no connections.')
+    finally:
+        root.destroy()

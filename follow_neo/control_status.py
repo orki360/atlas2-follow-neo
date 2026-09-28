@@ -29,6 +29,8 @@ def control_indicator(control, rejection='', selected=None):
             return 'DANCE ON - KEYBOARD OVERRIDE', detail, '#234f86'
         if detail.startswith('Search /'):
             return 'DANCE ON - SEARCH / YAW 100%', detail + ' | Q / Esc: release', '#76550d'
+        if detail.startswith('Scan /'):
+            return 'DANCE ON - LEFT / RIGHT SCAN', detail + ' | Q / Esc: release', '#76550d'
         if detail.startswith('Tracking /'):
             return 'NEO DANCE ON - TRACKING', detail + ' | Q / Esc: release', '#116846'
         if detail.startswith('Kalman recovery /'):

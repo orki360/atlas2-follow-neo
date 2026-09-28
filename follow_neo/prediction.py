@@ -26,6 +26,11 @@ def project_center(anchor, now):
     """Shared source-time trajectory: bounded displacement, damped velocity."""
     import math
     age=max(0.,now-anchor['time'])
+    if anchor.get('model')=='botsort_cv':
+        # Read-only projection from the last source-frame BoT estimate. Evidence
+        # expiry is enforced separately; GUI polling never advances the filter.
+        return (anchor['cx']+anchor['vx']*age,anchor['cy']+anchor['vy']*age,
+                anchor['vx'],anchor['vy'])
     steady=anchor.get('damp_after',.10)
     tau=anchor.get('decay_tau',.16)
     tail=max(0.,age-steady)

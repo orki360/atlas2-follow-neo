@@ -6,39 +6,63 @@ from .tracker import BBoxTracker
 from .policy import SmartTrackingController, DeterministicTrackingPolicy
 from .spacing import VisualSpacingController
 from .edge_search import EdgeYawSearch
+from .recovery_search import RecoverySearch
 from .prediction import (COAST_SECONDS, COAST_YAW, COAST_VERTICAL, STABLE_FORWARD_SECONDS,
                          fade, forward_fade, continuation_threshold)
 
 
 class FollowController:
-    def __init__(self): self.reset()
+    def __init__(self, tracker_backend='legacy'):
+        # Historical headless replays retain their original backend. Live sessions
+        # explicitly use BoT-SORT; this also keeps comparisons reproducible.
+        if tracker_backend not in ('legacy', 'botsort'):
+            raise ValueError('Unknown tracking backend: '+tracker_backend)
+        self.tracker_backend=tracker_backend
+        self.reset()
+
+    def _new_tracker(self, size=(640,480)):
+        if self.tracker_backend=='botsort':
+            from .botsort_tracker import BoTSORTTracker
+            return BoTSORTTracker(size)
+        return BBoxTracker(size)
 
     def reset(self):
-        self.tracker=BBoxTracker(); self.smart=SmartTrackingController()
+        self.tracker=self._new_tracker(); self.smart=SmartTrackingController()
         self.policy=DeterministicTrackingPolicy(); self.spacing=VisualSpacingController()
         self.last_accepted=None; self.rejected=True; self.result_time=None
         self.frame_size=None; self.result_id=None
         self.missing_detection=False; self.last_track_command=None
         self.last_center_command=None
-        self.edge_search=EdgeYawSearch()
+        self.edge_search=RecoverySearch() if self.tracker_backend=='botsort' else EdgeYawSearch()
+        self.raw_detections=[]
+        self.control_result_floor=None
 
-    def observe(self,detections,source_time,now,frame_id,size,settings):
+    def restart_control(self):
+        """Reset control history and spacing without erasing target identity."""
+        self.smart=SmartTrackingController();self.policy=DeterministicTrackingPolicy()
+        self.spacing=VisualSpacingController();self.last_center_command=self.last_track_command=None
+        self.edge_search.reset()
+        self.control_result_floor=self.result_id
+
+    def observe(self,detections,source_time,now,frame_id,size,settings,image=None):
         if self.frame_size is not None and self.frame_size!=size: self.reset()
-        if self.frame_size is None: self.tracker=BBoxTracker(size)
+        if self.frame_size is None: self.tracker=self._new_tracker(size)
         self.frame_size=size
         if self.result_id is not None and frame_id<=self.result_id: return False
         self.result_id=frame_id; self.result_time=source_time
+        self.raw_detections=[dict(box=list(vars(d.box).values()),confidence=d.confidence) for d in detections]
         self.missing_detection=not detections
         if not math.isfinite(source_time) or not 0<=now-source_time<=settings.stale_seconds:
             self.rejected=True;self.edge_search.reset(); return False
         # Release the association gate after prolonged loss; policy remembers
         # loss age until a genuinely new measurement is accepted.
         t=self.tracker
-        if t.measurement_time is not None and now-t.measurement_time>settings.reacquire_seconds:
+        if self.tracker_backend=='legacy' and t.measurement_time is not None and now-t.measurement_time>settings.reacquire_seconds:
             t.reset()
+        kwargs={'image':image} if self.tracker_backend=='botsort' else {}
         accepted=t.update(detections,source_time,now,frame_id,
                           max(settings.new_track_confidence,settings.confidence),
-                          settings.confidence,continuation_threshold(settings.confidence))
+                          settings.confidence,continuation_threshold(settings.confidence),**kwargs)
         self.rejected=not accepted
         if accepted: self.last_accepted=t.accepted
         self.edge_search.observe(accepted,not detections,t.confirmed,
@@ -55,12 +79,18 @@ class FollowController:
         stream_stale=video_time is None or not 0<=now-video_time<=settings.stale_seconds
         result_stale=self.result_time is None or not 0<=now-self.result_time<=settings.stale_seconds
         stale=stream_stale or result_stale
-        real_fresh=not self.rejected and age<=.25
+        after_restart=self.control_result_floor is None or (self.result_id is not None and self.result_id>self.control_result_floor)
+        real_fresh=not self.rejected and age<=.25 and after_restart
         raw,ex,ey=self.smart.compute(k,width,height,age,not real_fresh,now,settings)
         raw.forward*=settings.forward_limit
         current_center=replace(raw);measurement_scale=1. if real_fresh else 0.
-        search=self.edge_search.update(now,self.missing_detection,stale,
-                    self.spacing.phase,self.spacing.close,settings,heading)
+        std=uncertainty.get('position_std_px')
+        forecast_ok=std is not None and std[0]<width*.12 and std[1]<height*.12
+        pending=bool(getattr(t,'candidate_pending',False) and self.result_time is not None and now-self.result_time<=.15)
+        search_kwargs=dict(candidate_pending=pending,
+                           bridge_reliable=forecast_ok and quality['stable'] and age<=COAST_SECONDS) if self.tracker_backend=='botsort' else {}
+        search=self.edge_search.update(now,self.rejected if self.tracker_backend=='botsort' else self.missing_detection,stale,
+                    self.spacing.phase,self.spacing.close,settings,heading,**search_kwargs)
         cmd=self.policy.update(now,k,width,height,mtime if t.confirmed else None,
                     t.measurement_id if t.confirmed else None,raw,settings,
                     abort=stale,accepted=real_fresh,search=search)
@@ -93,7 +123,9 @@ class FollowController:
             if forward_coast:cmd.forward=previous.forward*forward_fade(age)
             brief_gap=forward_coast and age<=.25
         if search['active']:
-            cmd=Intent(yaw=float(search['direction']));coast=forward_coast=brief_gap=False
+            cmd=Intent(yaw=float(search.get('scan_yaw',0.) if search.get('phase')=='SCAN' else search['direction']));coast=forward_coast=brief_gap=False
+        if pending and not real_fresh:
+            cmd=Intent();coast=forward_coast=brief_gap=False
         if stale:cmd=Intent();coast=forward_coast=brief_gap=False
         recovery_reason=('coast_active' if coast else 'video_or_result_unavailable' if stale
                          else 'measured_search_active' if search['active'] else 'yolo_available' if real_fresh
@@ -108,7 +140,12 @@ class FollowController:
         show_track=t.confirmed and (age<=.300 or coast) and not stream_stale and not result_stale
         track_confidence=(self.last_accepted.confidence*math.exp(-.25*age/.300)
                           if show_track and self.last_accepted is not None else None)
+        from .botsort_tracker import low_threshold
         return {'state':self.policy.state,'reason':self.policy.reason,
+                'tracking':t.diagnostics() if self.tracker_backend=='botsort' else {'backend':'legacy'},
+                'candidate_pending':pending,
+                'raw_detections':self.raw_detections,'raw_detection_time':self.result_time,
+                'selected_measurement_box':None if t.accepted is None else list(vars(t.accepted.box).values()),
                 'edge_search':search,
                 'brief_detection_gap':brief_gap,
                 'prediction_recovery':coast,
@@ -119,7 +156,7 @@ class FollowController:
                 'prediction_anchor':t.anchor(),
                 'prediction_display_allowed':coast,
                 'track_support':('prediction' if not real_fresh else 'weak_yolo' if t.measurement_weak else 'yolo') if show_track else 'none',
-                'detector_continuation_threshold':continuation_threshold(settings.confidence),
+                'detector_continuation_threshold':low_threshold(settings.confidence) if self.tracker_backend=='botsort' else continuation_threshold(settings.confidence),
                 'detector_acquisition_threshold':max(settings.new_track_confidence,settings.confidence),
                 'last_strong_measurement_time':t.last_strong_time,
                 'bbox_clipped':clipped,

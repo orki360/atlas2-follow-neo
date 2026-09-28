@@ -1,0 +1,38 @@
+[
+  {
+    "recording": "recording_125710_b80325",
+    "frame": 7569,
+    "time": 100581.734,
+    "reason": "verified_strong_recovery"
+  },
+  {
+    "recording": "recording_125710_b80325",
+    "frame": 8609,
+    "time": 100599.078,
+    "reason": "verified_returning_target"
+  },
+  {
+    "recording": "recording_130039_ddfa39",
+    "frame": 18407,
+    "time": 100788.953,
+    "reason": "verified_weak_recovery"
+  },
+  {
+    "recording": "recording_130039_ddfa39",
+    "frame": 18335,
+    "time": 100787.75,
+    "reason": "verified_returning_target"
+  },
+  {
+    "recording": "recording_130204_2d805b",
+    "frame": 23339,
+    "time": 100871.234,
+    "reason": "verified_strong_recovery"
+  },
+  {
+    "recording": "recording_130204_2d805b",
+    "frame": 23776,
+    "time": 100878.531,
+    "reason": "verified_returning_target"
+  }
+]

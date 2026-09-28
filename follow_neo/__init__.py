@@ -1,1 +1,2 @@
-__version__ = "0.12.0-update10"
+"""Follow NEO application package."""
+from VERSION import VERSION as __version__

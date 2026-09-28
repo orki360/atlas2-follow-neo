@@ -174,8 +174,11 @@ class KeyboardTests(unittest.TestCase):
     def test_key_release_clears_motion(self):
         self.window.key_press(self.event('w'))
         self.window.key_release(self.event('w'))
-        callback = self.window.root.after_idle.call_args.args[0]
-        callback()
+        if sys.platform=='win32':
+            self.window.root.after_idle.assert_not_called()
+        else:
+            callback = self.window.root.after_idle.call_args.args[0]
+            callback()
         self.window.manual.update.assert_called_with(set())
 
     def test_focus_leaving_canvas_releases(self):

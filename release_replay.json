@@ -1,0 +1,69 @@
+[
+  {
+    "recording": "recording_125710_b80325",
+    "matched_frames": 1595,
+    "recorded_frames": 1628,
+    "accepted": 903,
+    "search": 296,
+    "id_changes": 0,
+    "strong_rejected": 75,
+    "states": {
+      "WAIT_TARGET": 1,
+      "REACQUIRE": 41,
+      "TRACK": 877,
+      "COAST": 148,
+      "DIRECTIONAL_SEARCH": 296,
+      "HOVER_WAIT": 232
+    }
+  },
+  {
+    "recording": "recording_125845_a4a8ea",
+    "matched_frames": 758,
+    "recorded_frames": 782,
+    "accepted": 623,
+    "search": 109,
+    "id_changes": 0,
+    "strong_rejected": 5,
+    "states": {
+      "WAIT_TARGET": 1,
+      "REACQUIRE": 2,
+      "TRACK": 620,
+      "COAST": 26,
+      "DIRECTIONAL_SEARCH": 109
+    }
+  },
+  {
+    "recording": "recording_130039_ddfa39",
+    "matched_frames": 1231,
+    "recorded_frames": 1263,
+    "accepted": 578,
+    "search": 323,
+    "id_changes": 0,
+    "strong_rejected": 77,
+    "states": {
+      "WAIT_TARGET": 1,
+      "REACQUIRE": 33,
+      "TRACK": 549,
+      "COAST": 159,
+      "DIRECTIONAL_SEARCH": 323,
+      "HOVER_WAIT": 166
+    }
+  },
+  {
+    "recording": "recording_130204_2d805b",
+    "matched_frames": 2080,
+    "recorded_frames": 2097,
+    "accepted": 885,
+    "search": 179,
+    "id_changes": 0,
+    "strong_rejected": 62,
+    "states": {
+      "WAIT_TARGET": 1,
+      "REACQUIRE": 18,
+      "TRACK": 872,
+      "COAST": 110,
+      "DIRECTIONAL_SEARCH": 179,
+      "HOVER_WAIT": 900
+    }
+  }
+]

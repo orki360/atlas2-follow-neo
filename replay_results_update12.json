@@ -1,0 +1,911 @@
+{
+  "scope": "offline smoke test; no ground truth or flight validation",
+  "model": "yolo26s_seg_best_v1.onnx",
+  "frames": 60,
+  "fps_assumption": 30.0,
+  "accepted_frames": 19,
+  "tracker_median_ms": 13.281799998367205,
+  "tracker_p95_ms": 18.183099993621,
+  "rows": [
+    {
+      "frame": "lab_recording_200607_050ac1_01.jpg",
+      "detections": 1,
+      "accepted": true,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 1,
+        "reid": false,
+        "camera_motion": "insufficient_features",
+        "camera_motion_inliers": 0
+      },
+      "state": "WAIT_TARGET",
+      "tracker_ms": 291.87570000067353,
+      "inference_ms": 239.1424000088591
+    },
+    {
+      "frame": "lab_recording_200607_050ac1_02.jpg",
+      "detections": 1,
+      "accepted": true,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 1,
+        "reid": false,
+        "camera_motion": "applied",
+        "camera_motion_inliers": 386
+      },
+      "state": "REACQUIRE",
+      "tracker_ms": 11.051399997086264,
+      "inference_ms": 267.46440000715666
+    },
+    {
+      "frame": "lab_recording_200607_050ac1_03.jpg",
+      "detections": 1,
+      "accepted": true,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 1,
+        "reid": false,
+        "camera_motion": "applied",
+        "camera_motion_inliers": 384
+      },
+      "state": "REACQUIRE",
+      "tracker_ms": 11.856500001158565,
+      "inference_ms": 237.2571999876527
+    },
+    {
+      "frame": "lab_recording_200607_050ac1_04.jpg",
+      "detections": 1,
+      "accepted": true,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 1,
+        "reid": false,
+        "camera_motion": "applied",
+        "camera_motion_inliers": 357
+      },
+      "state": "TRACK",
+      "tracker_ms": 11.254000011831522,
+      "inference_ms": 224.18639999523293
+    },
+    {
+      "frame": "lab_recording_200607_050ac1_05.jpg",
+      "detections": 1,
+      "accepted": false,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 1,
+        "reid": false,
+        "camera_motion": "rejected_transform",
+        "camera_motion_inliers": 114
+      },
+      "state": "COAST",
+      "tracker_ms": 12.166400003479794,
+      "inference_ms": 222.0999999990454
+    },
+    {
+      "frame": "lab_recording_200607_050ac1_06.jpg",
+      "detections": 1,
+      "accepted": false,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 1,
+        "reid": false,
+        "camera_motion": "rejected_transform",
+        "camera_motion_inliers": 5
+      },
+      "state": "COAST",
+      "tracker_ms": 17.002599997795187,
+      "inference_ms": 226.62700001092162
+    },
+    {
+      "frame": "lab_recording_200607_050ac1_07.jpg",
+      "detections": 1,
+      "accepted": false,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 1,
+        "reid": false,
+        "camera_motion": "rejected_transform",
+        "camera_motion_inliers": 51
+      },
+      "state": "COAST",
+      "tracker_ms": 13.281799998367205,
+      "inference_ms": 228.56669999600854
+    },
+    {
+      "frame": "lab_recording_200607_050ac1_08.jpg",
+      "detections": 1,
+      "accepted": false,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 1,
+        "reid": false,
+        "camera_motion": "insufficient_features",
+        "camera_motion_inliers": 0
+      },
+      "state": "COAST",
+      "tracker_ms": 17.641300000832416,
+      "inference_ms": 226.95600001316052
+    },
+    {
+      "frame": "lab_recording_200607_050ac1_09.jpg",
+      "detections": 0,
+      "accepted": false,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 1,
+        "reid": false,
+        "camera_motion": "rejected_transform",
+        "camera_motion_inliers": 35
+      },
+      "state": "COAST",
+      "tracker_ms": 16.196800002944656,
+      "inference_ms": 218.55010000581387
+    },
+    {
+      "frame": "lab_recording_200607_050ac1_10.jpg",
+      "detections": 0,
+      "accepted": false,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 1,
+        "reid": false,
+        "camera_motion": "applied",
+        "camera_motion_inliers": 380
+      },
+      "state": "COAST",
+      "tracker_ms": 11.59660000121221,
+      "inference_ms": 233.4225999948103
+    },
+    {
+      "frame": "lab_recording_200750_b2b484_01.jpg",
+      "detections": 1,
+      "accepted": false,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 1,
+        "reid": false,
+        "camera_motion": "insufficient_features",
+        "camera_motion_inliers": 0
+      },
+      "state": "COAST",
+      "tracker_ms": 16.990600008284673,
+      "inference_ms": 214.84450000571087
+    },
+    {
+      "frame": "lab_recording_200750_b2b484_02.jpg",
+      "detections": 1,
+      "accepted": false,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 1,
+        "reid": false,
+        "camera_motion": "applied",
+        "camera_motion_inliers": 389
+      },
+      "state": "COAST",
+      "tracker_ms": 11.967300000833347,
+      "inference_ms": 248.11129999579862
+    },
+    {
+      "frame": "lab_recording_200750_b2b484_03.jpg",
+      "detections": 1,
+      "accepted": false,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 1,
+        "reid": false,
+        "camera_motion": "applied",
+        "camera_motion_inliers": 398
+      },
+      "state": "COAST",
+      "tracker_ms": 10.211599990725517,
+      "inference_ms": 216.44950000336394
+    },
+    {
+      "frame": "lab_recording_200750_b2b484_04.jpg",
+      "detections": 1,
+      "accepted": true,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 1,
+        "reid": false,
+        "camera_motion": "applied",
+        "camera_motion_inliers": 393
+      },
+      "state": "REACQUIRE",
+      "tracker_ms": 10.893600003328174,
+      "inference_ms": 221.2605000095209
+    },
+    {
+      "frame": "lab_recording_200750_b2b484_05.jpg",
+      "detections": 1,
+      "accepted": true,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 1,
+        "reid": false,
+        "camera_motion": "applied",
+        "camera_motion_inliers": 388
+      },
+      "state": "REACQUIRE",
+      "tracker_ms": 11.289700007182546,
+      "inference_ms": 221.9022000062978
+    },
+    {
+      "frame": "lab_recording_200750_b2b484_06.jpg",
+      "detections": 1,
+      "accepted": true,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 1,
+        "reid": false,
+        "camera_motion": "applied",
+        "camera_motion_inliers": 397
+      },
+      "state": "TRACK",
+      "tracker_ms": 10.166300009586848,
+      "inference_ms": 249.33120000059716
+    },
+    {
+      "frame": "lab_recording_200750_b2b484_07.jpg",
+      "detections": 1,
+      "accepted": true,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 1,
+        "reid": false,
+        "camera_motion": "applied",
+        "camera_motion_inliers": 371
+      },
+      "state": "TRACK",
+      "tracker_ms": 11.595400006626733,
+      "inference_ms": 230.1986999955261
+    },
+    {
+      "frame": "lab_recording_200750_b2b484_08.jpg",
+      "detections": 1,
+      "accepted": true,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 1,
+        "reid": false,
+        "camera_motion": "applied",
+        "camera_motion_inliers": 397
+      },
+      "state": "TRACK",
+      "tracker_ms": 11.647500010440126,
+      "inference_ms": 224.91969999100547
+    },
+    {
+      "frame": "lab_recording_200750_b2b484_09.jpg",
+      "detections": 1,
+      "accepted": true,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 1,
+        "reid": false,
+        "camera_motion": "applied",
+        "camera_motion_inliers": 386
+      },
+      "state": "TRACK",
+      "tracker_ms": 12.01510000100825,
+      "inference_ms": 246.8877000064822
+    },
+    {
+      "frame": "lab_recording_200750_b2b484_10.jpg",
+      "detections": 1,
+      "accepted": true,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 1,
+        "reid": false,
+        "camera_motion": "applied",
+        "camera_motion_inliers": 398
+      },
+      "state": "TRACK",
+      "tracker_ms": 12.09730000118725,
+      "inference_ms": 232.17419999127742
+    },
+    {
+      "frame": "lab_recording_200750_b2b484_11.jpg",
+      "detections": 1,
+      "accepted": true,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 1,
+        "reid": false,
+        "camera_motion": "applied",
+        "camera_motion_inliers": 397
+      },
+      "state": "TRACK",
+      "tracker_ms": 12.081200009561144,
+      "inference_ms": 235.5993000091985
+    },
+    {
+      "frame": "lab_recording_200750_b2b484_12.jpg",
+      "detections": 1,
+      "accepted": false,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 1,
+        "reid": false,
+        "camera_motion": "rejected_transform",
+        "camera_motion_inliers": 4
+      },
+      "state": "COAST",
+      "tracker_ms": 18.83060000545811,
+      "inference_ms": 226.68539998994675
+    },
+    {
+      "frame": "lab_recording_200750_b2b484_13.jpg",
+      "detections": 1,
+      "accepted": false,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 1,
+        "reid": false,
+        "camera_motion": "rejected_transform",
+        "camera_motion_inliers": 157
+      },
+      "state": "COAST",
+      "tracker_ms": 12.462300001061521,
+      "inference_ms": 220.46799999952782
+    },
+    {
+      "frame": "lab_recording_200750_b2b484_14.jpg",
+      "detections": 0,
+      "accepted": false,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 1,
+        "reid": false,
+        "camera_motion": "applied",
+        "camera_motion_inliers": 268
+      },
+      "state": "COAST",
+      "tracker_ms": 11.658600007649511,
+      "inference_ms": 220.9798999974737
+    },
+    {
+      "frame": "lab_recording_200750_b2b484_15.jpg",
+      "detections": 0,
+      "accepted": false,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 1,
+        "reid": false,
+        "camera_motion": "applied",
+        "camera_motion_inliers": 396
+      },
+      "state": "COAST",
+      "tracker_ms": 12.787899991963059,
+      "inference_ms": 214.06820000265725
+    },
+    {
+      "frame": "lab_recording_200750_b2b484_16.jpg",
+      "detections": 1,
+      "accepted": false,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 1,
+        "reid": false,
+        "camera_motion": "rejected_transform",
+        "camera_motion_inliers": 173
+      },
+      "state": "COAST",
+      "tracker_ms": 13.609100002213381,
+      "inference_ms": 232.62710000562947
+    },
+    {
+      "frame": "lab_recording_200750_b2b484_17.jpg",
+      "detections": 1,
+      "accepted": false,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 1,
+        "reid": false,
+        "camera_motion": "rejected_transform",
+        "camera_motion_inliers": 146
+      },
+      "state": "COAST",
+      "tracker_ms": 12.828899998567067,
+      "inference_ms": 221.822899999097
+    },
+    {
+      "frame": "lab_recording_200750_b2b484_18.jpg",
+      "detections": 1,
+      "accepted": false,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 1,
+        "reid": false,
+        "camera_motion": "applied",
+        "camera_motion_inliers": 400
+      },
+      "state": "COAST",
+      "tracker_ms": 11.738500004867092,
+      "inference_ms": 234.11759998998605
+    },
+    {
+      "frame": "lab_recording_200750_b2b484_19.jpg",
+      "detections": 0,
+      "accepted": false,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 1,
+        "reid": false,
+        "camera_motion": "applied",
+        "camera_motion_inliers": 310
+      },
+      "state": "COAST",
+      "tracker_ms": 13.640499993925914,
+      "inference_ms": 218.01480000431184
+    },
+    {
+      "frame": "lab_recording_200750_b2b484_20.jpg",
+      "detections": 0,
+      "accepted": false,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 1,
+        "reid": false,
+        "camera_motion": "insufficient_features",
+        "camera_motion_inliers": 0
+      },
+      "state": "COAST",
+      "tracker_ms": 16.693300000042655,
+      "inference_ms": 235.38499999267515
+    },
+    {
+      "frame": "lab_recording_200750_b2b484_21.jpg",
+      "detections": 1,
+      "accepted": false,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 1,
+        "reid": false,
+        "camera_motion": "insufficient_features",
+        "camera_motion_inliers": 0
+      },
+      "state": "COAST",
+      "tracker_ms": 18.15829999395646,
+      "inference_ms": 218.07480001007207
+    },
+    {
+      "frame": "lab_recording_200750_b2b484_22.jpg",
+      "detections": 1,
+      "accepted": false,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 1,
+        "reid": false,
+        "camera_motion": "rejected_transform",
+        "camera_motion_inliers": 143
+      },
+      "state": "COAST",
+      "tracker_ms": 18.406299990601838,
+      "inference_ms": 248.82849999994505
+    },
+    {
+      "frame": "lab_recording_200904_2a520f_01.jpg",
+      "detections": 1,
+      "accepted": false,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 1,
+        "reid": false,
+        "camera_motion": "applied",
+        "camera_motion_inliers": 393
+      },
+      "state": "COAST",
+      "tracker_ms": 16.313500003889203,
+      "inference_ms": 247.42430000333115
+    },
+    {
+      "frame": "lab_recording_200906_f76630_01.jpg",
+      "detections": 1,
+      "accepted": false,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 1,
+        "reid": false,
+        "camera_motion": "applied",
+        "camera_motion_inliers": 389
+      },
+      "state": "COAST",
+      "tracker_ms": 15.463300005649216,
+      "inference_ms": 295.63940000662114
+    },
+    {
+      "frame": "lab_recording_200906_f76630_02.jpg",
+      "detections": 1,
+      "accepted": false,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 1,
+        "reid": false,
+        "camera_motion": "applied",
+        "camera_motion_inliers": 385
+      },
+      "state": "COAST",
+      "tracker_ms": 14.714300006744452,
+      "inference_ms": 275.68460001202766
+    },
+    {
+      "frame": "lab_recording_200914_ada91d_01.jpg",
+      "detections": 1,
+      "accepted": false,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 1,
+        "reid": false,
+        "camera_motion": "applied",
+        "camera_motion_inliers": 399
+      },
+      "state": "COAST",
+      "tracker_ms": 17.277999999350868,
+      "inference_ms": 285.8593000128167
+    },
+    {
+      "frame": "lab_recording_200914_ada91d_02.jpg",
+      "detections": 1,
+      "accepted": false,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 1,
+        "reid": false,
+        "camera_motion": "applied",
+        "camera_motion_inliers": 397
+      },
+      "state": "COAST",
+      "tracker_ms": 14.53669999318663,
+      "inference_ms": 291.97609999391716
+    },
+    {
+      "frame": "lab_recording_200914_ada91d_03.jpg",
+      "detections": 1,
+      "accepted": false,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 1,
+        "reid": false,
+        "camera_motion": "applied",
+        "camera_motion_inliers": 393
+      },
+      "state": "COAST",
+      "tracker_ms": 14.015399996424094,
+      "inference_ms": 254.4105999986641
+    },
+    {
+      "frame": "lab_recording_200914_ada91d_04.jpg",
+      "detections": 1,
+      "accepted": false,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 1,
+        "reid": false,
+        "camera_motion": "applied",
+        "camera_motion_inliers": 369
+      },
+      "state": "COAST",
+      "tracker_ms": 14.890799997374415,
+      "inference_ms": 273.8332000008086
+    },
+    {
+      "frame": "lab_recording_200930_4801d7_01.jpg",
+      "detections": 1,
+      "accepted": false,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 1,
+        "reid": false,
+        "camera_motion": "applied",
+        "camera_motion_inliers": 395
+      },
+      "state": "COAST",
+      "tracker_ms": 12.135599987232126,
+      "inference_ms": 266.3281000131974
+    },
+    {
+      "frame": "lab_recording_200934_cd8338_01.jpg",
+      "detections": 1,
+      "accepted": false,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 1,
+        "reid": false,
+        "camera_motion": "applied",
+        "camera_motion_inliers": 354
+      },
+      "state": "HOVER_WAIT",
+      "tracker_ms": 11.94019999820739,
+      "inference_ms": 234.1191000014078
+    },
+    {
+      "frame": "lab_recording_200934_cd8338_02.jpg",
+      "detections": 1,
+      "accepted": false,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 1,
+        "reid": false,
+        "camera_motion": "applied",
+        "camera_motion_inliers": 397
+      },
+      "state": "HOVER_WAIT",
+      "tracker_ms": 13.298100006068125,
+      "inference_ms": 264.9743999936618
+    },
+    {
+      "frame": "lab_recording_200934_cd8338_03.jpg",
+      "detections": 1,
+      "accepted": false,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 1,
+        "reid": false,
+        "camera_motion": "applied",
+        "camera_motion_inliers": 369
+      },
+      "state": "HOVER_WAIT",
+      "tracker_ms": 13.835400008247234,
+      "inference_ms": 252.9357000021264
+    },
+    {
+      "frame": "lab_recording_200934_cd8338_04.jpg",
+      "detections": 1,
+      "accepted": true,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 18,
+        "reid": false,
+        "camera_motion": "insufficient_features",
+        "camera_motion_inliers": 0
+      },
+      "state": "HOVER_WAIT",
+      "tracker_ms": 6.199000010383315,
+      "inference_ms": 248.67689999518916
+    },
+    {
+      "frame": "lab_recording_200934_cd8338_05.jpg",
+      "detections": 1,
+      "accepted": true,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 18,
+        "reid": false,
+        "camera_motion": "applied",
+        "camera_motion_inliers": 367
+      },
+      "state": "REACQUIRE",
+      "tracker_ms": 13.623700011521578,
+      "inference_ms": 242.63569999311585
+    },
+    {
+      "frame": "lab_recording_200934_cd8338_06.jpg",
+      "detections": 1,
+      "accepted": true,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 18,
+        "reid": false,
+        "camera_motion": "applied",
+        "camera_motion_inliers": 399
+      },
+      "state": "REACQUIRE",
+      "tracker_ms": 11.885800005984493,
+      "inference_ms": 258.2579000008991
+    },
+    {
+      "frame": "lab_recording_200934_cd8338_07.jpg",
+      "detections": 1,
+      "accepted": true,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 18,
+        "reid": false,
+        "camera_motion": "applied",
+        "camera_motion_inliers": 399
+      },
+      "state": "TRACK",
+      "tracker_ms": 12.456099997507408,
+      "inference_ms": 229.5051999972202
+    },
+    {
+      "frame": "lab_recording_200934_cd8338_08.jpg",
+      "detections": 1,
+      "accepted": false,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 18,
+        "reid": false,
+        "camera_motion": "applied",
+        "camera_motion_inliers": 398
+      },
+      "state": "COAST",
+      "tracker_ms": 12.047800002619624,
+      "inference_ms": 234.96489999524783
+    },
+    {
+      "frame": "lab_recording_200934_cd8338_09.jpg",
+      "detections": 1,
+      "accepted": true,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 18,
+        "reid": false,
+        "camera_motion": "applied",
+        "camera_motion_inliers": 371
+      },
+      "state": "TRACK",
+      "tracker_ms": 13.235599995823577,
+      "inference_ms": 256.85749998956453
+    },
+    {
+      "frame": "lab_recording_200934_cd8338_10.jpg",
+      "detections": 1,
+      "accepted": true,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 18,
+        "reid": false,
+        "camera_motion": "applied",
+        "camera_motion_inliers": 394
+      },
+      "state": "TRACK",
+      "tracker_ms": 13.49310000659898,
+      "inference_ms": 248.72570000297856
+    },
+    {
+      "frame": "lab_recording_200934_cd8338_11.jpg",
+      "detections": 1,
+      "accepted": true,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 18,
+        "reid": false,
+        "camera_motion": "applied",
+        "camera_motion_inliers": 390
+      },
+      "state": "TRACK",
+      "tracker_ms": 15.058499993756413,
+      "inference_ms": 247.1147999895038
+    },
+    {
+      "frame": "lab_recording_200934_cd8338_12.jpg",
+      "detections": 1,
+      "accepted": false,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 18,
+        "reid": false,
+        "camera_motion": "applied",
+        "camera_motion_inliers": 391
+      },
+      "state": "COAST",
+      "tracker_ms": 13.47380000515841,
+      "inference_ms": 290.39429999829736
+    },
+    {
+      "frame": "lab_recording_200934_cd8338_13.jpg",
+      "detections": 1,
+      "accepted": false,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 18,
+        "reid": false,
+        "camera_motion": "applied",
+        "camera_motion_inliers": 398
+      },
+      "state": "COAST",
+      "tracker_ms": 14.052600003196858,
+      "inference_ms": 257.79759998840746
+    },
+    {
+      "frame": "lab_recording_200934_cd8338_14.jpg",
+      "detections": 1,
+      "accepted": false,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 18,
+        "reid": false,
+        "camera_motion": "applied",
+        "camera_motion_inliers": 386
+      },
+      "state": "COAST",
+      "tracker_ms": 13.463600000250153,
+      "inference_ms": 272.7468999946723
+    },
+    {
+      "frame": "lab_recording_200934_cd8338_15.jpg",
+      "detections": 1,
+      "accepted": false,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 18,
+        "reid": false,
+        "camera_motion": "applied",
+        "camera_motion_inliers": 365
+      },
+      "state": "COAST",
+      "tracker_ms": 14.641799993114546,
+      "inference_ms": 237.93279999517836
+    },
+    {
+      "frame": "lab_recording_200934_cd8338_16.jpg",
+      "detections": 1,
+      "accepted": false,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 18,
+        "reid": false,
+        "camera_motion": "rejected_transform",
+        "camera_motion_inliers": 45
+      },
+      "state": "COAST",
+      "tracker_ms": 20.701900008134544,
+      "inference_ms": 264.91909999458585
+    },
+    {
+      "frame": "lab_recording_200934_cd8338_17.jpg",
+      "detections": 1,
+      "accepted": false,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 18,
+        "reid": false,
+        "camera_motion": "applied",
+        "camera_motion_inliers": 224
+      },
+      "state": "COAST",
+      "tracker_ms": 16.08039998973254,
+      "inference_ms": 261.5565999876708
+    },
+    {
+      "frame": "lab_recording_200934_cd8338_18.jpg",
+      "detections": 1,
+      "accepted": false,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 18,
+        "reid": false,
+        "camera_motion": "applied",
+        "camera_motion_inliers": 366
+      },
+      "state": "COAST",
+      "tracker_ms": 12.630500001250766,
+      "inference_ms": 246.91129999700934
+    },
+    {
+      "frame": "lab_recording_200934_cd8338_19.jpg",
+      "detections": 1,
+      "accepted": false,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 18,
+        "reid": false,
+        "camera_motion": "applied",
+        "camera_motion_inliers": 374
+      },
+      "state": "COAST",
+      "tracker_ms": 12.84769999620039,
+      "inference_ms": 243.40550000488292
+    },
+    {
+      "frame": "lab_recording_200934_cd8338_20.jpg",
+      "detections": 1,
+      "accepted": false,
+      "tracking": {
+        "backend": "BoT-SORT",
+        "target_id": 18,
+        "reid": false,
+        "camera_motion": "applied",
+        "camera_motion_inliers": 389
+      },
+      "state": "COAST",
+      "tracker_ms": 13.688199993339367,
+      "inference_ms": 228.8847000017995
+    }
+  ]
+}

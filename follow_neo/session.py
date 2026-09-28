@@ -14,7 +14,7 @@ from .detector import OnnxDroneDetector, DetectorSettings
 from .controller import FollowController
 from .recording import VideoRecorder
 from . import __version__
-from .prediction import continuation_threshold
+from .botsort_tracker import low_threshold
 from .cadence import FrameRateGate
 from .telemetry import HeadingReceiver
 from .models import resolve_model,DEFAULT_MODEL
@@ -59,6 +59,7 @@ class FollowSession:
         self.recorder_lock=threading.Lock(); self.generation=0
         self.settings_lock=threading.Lock(); self.stop_event=threading.Event()
         self.reset_event=threading.Event(); self.result=LatestValue(); self.decision=LatestValue()
+        self.control_reset_event=threading.Event()
         self.analysis=LatestValue(); self.inference_count=0; self.inference_skips=0
         self.model_info=None; self.model_error=None; self.started_at=time.monotonic()
         self.flight_commands_sent=0
@@ -68,6 +69,8 @@ class FollowSession:
         self.log.write('session_start',{'version':__version__,'host':host,'port':9999,
              'codec':codec,'compute_requested':compute_mode,'device_id':device_id,'settings':asdict(self.settings),
              'model':self.model_manifest,'recording_profile':recording_profile,
+             'tracking_backend':'BoT-SORT','tracking_reid':False,
+             'tracking_motion':'botsort_only','tracking_revision':'continuity-1',
              'flight_control':'explicit_manual_or_dance_enable_required',
              'timestamp_origin':'local_decoder_monotonic_not_camera_exposure'})
         raw_path=self.output/f'video.{codec}' if record_raw else None
@@ -92,7 +95,13 @@ class FollowSession:
         settings.validate()
         with self.settings_lock: self.settings=settings; self.generation+=1
         self.receiver.processing_fps=settings.video_fps
-        self.reset_event.set(); self.log.write('settings',{'settings':asdict(settings)})
+        self.restart_control()
+        self.log.write('settings',{'settings':asdict(settings),'tracking_reset':False,'control_reset':True})
+
+    def restart_control(self):
+        self.decision.set(None)
+        self.control_reset_event.set()
+        self.log.write('control_restart_requested',{'tracking_reset':False})
 
     def reset(self):
         with self.settings_lock: self.generation+=1
@@ -146,7 +155,7 @@ class FollowSession:
                 if settings.inference_fps<settings.video_fps and not sampler.admit(frame.decoded_at,settings.inference_fps):continue
                 if now-frame.decoded_at>settings.stale_seconds:
                     continue
-                detector.settings=DetectorSettings(confidence=continuation_threshold(settings.confidence),
+                detector.settings=DetectorSettings(confidence=low_threshold(settings.confidence),
                                                    iou_threshold=settings.nms_iou)
                 result=detector.detect(frame.image)
                 result.update(frame=frame,completed_at=time.monotonic(),generation=generation)
@@ -157,8 +166,9 @@ class FollowSession:
             self.model_error=str(exc); self.log.write('inference_error',{'error':str(exc)})
 
     def _control(self):
-        controller=FollowController(); last_id=0; last_state=None; last_log=0.;result_version=0
+        last_id=0; last_state=None; last_log=0.;result_version=0
         try:
+            controller=FollowController(tracker_backend='botsort')
             while not self.stop_event.is_set():
                 # Wake as soon as inference completes, or tick for aging even
                 # without a result. No unconditional sleep after fresh work.
@@ -167,9 +177,13 @@ class FollowSession:
                 now=time.monotonic(); settings=self.get_settings()
                 if self.reset_event.is_set():
                     controller.reset(); self.reset_event.clear()
+                    self.control_reset_event.clear()
                     previous=self.result.get(); last_id=previous['frame'].frame_id if previous else 0
                     self.analysis.set(None); self.decision.set(None)
-                    self.log.write('tracking_reset',{})
+                    self.log.write('tracking_reset',{'reason':'explicit_reset'})
+                elif self.control_reset_event.is_set():
+                    controller.restart_control();self.control_reset_event.clear()
+                    self.log.write('control_restart',{'tracking_reset':False})
                 frame=self.receiver.frames.get(); result=self.result.get(); fresh_result=False
                 if frame is None:
                     self.stop_event.wait(.02); continue
@@ -178,7 +192,7 @@ class FollowSession:
                     src=result['frame']; last_id=src.frame_id
                     detections=[Detection(Box(*d['box']),d['confidence']) for d in result['detections']]
                     controller.observe(detections,src.decoded_at,now,src.frame_id,
-                                       (src.image.shape[1],src.image.shape[0]),settings)
+                                       (src.image.shape[1],src.image.shape[0]),settings,image=src.image)
                     fresh_result=True
                 decision=controller.tick(now,w,h,frame.decoded_at if self.receiver.state=='STREAMING' else None,
                                          settings,self.heading.get())
@@ -188,6 +202,8 @@ class FollowSession:
                 self.decision.set(decision)
                 if fresh_result:
                     chosen=controller.tracker.accepted
+                    identity_event=decision.get('tracking',{}).get('identity_event')
+                    if identity_event:self.log.write('target_reassociated',identity_event)
                     self.analysis.set({'result':result,'selected_box':None if chosen is None else asdict(chosen.box),'decision':decision})
                 key=(decision['state'],decision['spacing_phase'],decision['stale'],decision['edge_search']['active'])
                 if fresh_result or key!=last_state or now-last_log>=.5:

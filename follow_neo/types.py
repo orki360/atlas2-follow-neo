@@ -71,6 +71,7 @@ class Settings:
     edge_search_enabled: bool = True
     edge_search_seconds: float = 4.0
     search_yaw_degrees: float = 90.0
+    search_grace_seconds: float = .45
     stale_seconds: float = .75
     reacquire_seconds: float = .75
     stop_width: float = .20
@@ -87,6 +88,7 @@ class Settings:
         bounds = {'confidence':(.05,.95), 'nms_iou':(.05,.95),
                   'new_track_confidence':(.05,.99), 'inference_fps':(1,60), 'video_fps':(1,60),
                   'edge_search_seconds':(2,10), 'search_yaw_degrees':(0,180),
+                  'search_grace_seconds':(.30,1.),
                   'stale_seconds':(.1,2), 'reacquire_seconds':(.65,5),
                   'stop_width':(.01,.50), 'yaw_limit':(.1,1),
                   'vertical_limit':(.1,1), 'forward_limit':(0,1),
