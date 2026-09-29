@@ -21,6 +21,11 @@ assignment are retained. Local changes:
   sparse optical flow, detection exclusion masks, forward/backward validation,
   RANSAC, transform plausibility checks, and explicit identity fallback.
 
-BoT-SORT selects the target ID and associates measurements. The existing
-BBoxTracker remains a separate source-time control smoother, with its existing
-uncertainty/quality and age guards. Only real matched measurements feed it.
+BoT-SORT is the sole motion estimator in the live application. BBoxTracker is
+retained only for the legacy backend and its historical tests. Recovery applies
+verified raw measurements to the original BoT state and retains logical identity.
+
+The stabilization-2 change fixes the batch prediction path: it now calls each
+track's `predict()`, which uses the per-engine filter configured for the actual
+source-frame interval. The upstream global shared filter used a fixed step and
+bypassed that configuration.

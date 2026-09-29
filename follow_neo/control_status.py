@@ -1,6 +1,29 @@
 """Visible control authority, distinct from perception's TRACK state."""
 
 
+def target_status_text(decision):
+    tracking=decision.get('tracking',{})
+    state=tracking.get('acquisition_state')
+    if decision.get('stale'):return 'Waiting for current video / detection'
+    if tracking.get('association_reason')=='acquisition_ambiguous':return 'Ambiguous target candidates / waiting'
+    if state=='verifying':return f"Verifying target ({tracking.get('acquisition_strong_hits',0)}/2 strong measurements)"
+    if state=='reacquiring':return 'Reacquiring target'
+    if state=='waiting':return 'Waiting for first strong target'
+    if tracking.get('candidate_pending'):return 'Reacquiring target / verifying YOLO candidate'
+    return decision.get('state','Waiting for target')
+
+
+def acknowledged_command_text(control,now):
+    if control is None or not control.enabled or not control.wanted:
+        return 'RC: no active control authority'
+    ack=getattr(control,'last_acknowledged',None)
+    if not ack:return 'RC: awaiting acknowledgement'
+    age=now-ack['time']
+    if not 0<=age<=.35:return 'RC: no recent acknowledgement'
+    values=ack['values']
+    return f"RC ACK {ack['mode']} | yaw {values[0]:+.3f} / forward {values[3]:+.3f} ({age*1000:.0f} ms)"
+
+
 def control_indicator(control, rejection='', selected=None):
     dance=(control is not None and control.mode=='DANCE') if selected is None else selected
     if rejection:

@@ -2,6 +2,7 @@
 import math
 from .edge_search import yaw_override
 from .recovery_search import scan_command
+from .control_status import target_status_text
 from .prediction import (COAST_SECONDS, COAST_YAW, COAST_VERTICAL, STABLE_FORWARD_SECONDS,
                          fade, forward_fade)
 
@@ -14,6 +15,8 @@ def dance_command(decision,now,started):
     stamp=decision.get('prediction_time')
     if not isinstance(stamp,(int,float)) or not math.isfinite(stamp):return ZERO,'Invalid decision time'
     if stamp<=started or not 0<=now-stamp<=.20:return ZERO,'Waiting for a fresh decision'
+    if decision.get('tracking',{}).get('acquisition_state') in ('verifying','reacquiring','waiting'):
+        return ZERO,'Hover / '+target_status_text(decision)
     measurement_time=decision.get('measurement_time')
     if measurement_time is not None and measurement_time<=started:
         return ZERO,'Waiting for a measurement after Dance started'
@@ -81,7 +84,7 @@ class DanceSmoother:
     def reset(self):
         self.values=ZERO; self.last_time=None
 
-    def update(self,values,now,active=True):
+    def update(self,values,now,active=True,damped_yaw=False):
         if not active or not math.isfinite(now):
             self.reset(); return ZERO
         if self.last_time is None or not 0<=now-self.last_time<=.25:
@@ -91,7 +94,10 @@ class DanceSmoother:
         for i,(old,target,rate) in enumerate(zip(self.values,values,self.RATES)):
             if not math.isfinite(target): self.reset(); return ZERO
             target=max(-1.,min(1.,target))
-            if i==3 and (target==0 or old*target<0 or abs(target)<abs(old)):
+            if i==0 and damped_yaw and (target==0 or old*target<0 or abs(target)<abs(old)):
+                # Let early braking take effect promptly; a reversal still passes zero.
+                value=0. if target==0 or old*target<0 else target
+            elif i==3 and (target==0 or old*target<0 or abs(target)<abs(old)):
                 value=0. if old*target<0 else target
             else:
                 waypoint=0. if old*target<0 else target

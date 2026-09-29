@@ -51,9 +51,9 @@ class TransportTests(unittest.TestCase):
         wait_for(lambda:self.control.enabled)
         self.control.update({'down'})
         self.assertTrue(self.peer.motion.wait(1))
-    def test_release_sends_zero_and_disable_without_waiting_for_old_reply(self):
+    def test_release_sends_zero_immediately_and_disables_at_original_ack_deadline(self):
         self.start();released=time.monotonic();self.control.update(set())
-        self.assertTrue(self.peer.zero.wait(.20));self.assertTrue(self.peer.disabled.wait(.20))
+        self.assertTrue(self.peer.zero.wait(.20));self.assertTrue(self.peer.disabled.wait(.30))
         self.control.thread.join(1)
         self.assertFalse(self.control.enabled);self.assertFalse(self.control.wanted)
         self.assertLess(time.monotonic()-released,.4)

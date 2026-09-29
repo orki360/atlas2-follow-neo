@@ -87,7 +87,9 @@ class ConfigTests(unittest.TestCase):
         w.search_vars={k:Mock(get=Mock(return_value=v)) for k,v in [('search_yaw_degrees','180'),('edge_search_seconds','8')]}
         w.edge_search_on=Mock(get=Mock(return_value=True));w.session=Mock();w.save_config=Mock()
         w.mark_dirty=Mock();w.notice=Mock();w.canvas=Mock()
-        w.apply_search();w.session.configure_search.assert_called_once_with(180,8,True)
+        w.search_auto=Mock(get=Mock(return_value=False))
+        w.apply_search();w.session.configure_search.assert_called_once_with(180,8,True,False)
+        self.assertFalse(w.settings.search_auto_duration)
         w.session.configure.assert_not_called();self.assertEqual(w.settings.confidence,.4)
     def test_search_focus_keeps_control_and_clears_movement_keys(self):
         from test_focus_transition import FocusTransitionTests

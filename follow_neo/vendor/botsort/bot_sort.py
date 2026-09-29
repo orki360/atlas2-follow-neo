@@ -51,17 +51,10 @@ class STrack(BaseTrack):
 
     @staticmethod
     def multi_predict(stracks):
-        if len(stracks) > 0:
-            multi_mean = np.asarray([st.mean.copy() for st in stracks])
-            multi_covariance = np.asarray([st.covariance for st in stracks])
-            for i, st in enumerate(stracks):
-                if st.state != TrackState.Tracked:
-                    multi_mean[i][6] = 0
-                    multi_mean[i][7] = 0
-            multi_mean, multi_covariance = STrack.shared_kalman.multi_predict(multi_mean, multi_covariance)
-            for i, (mean, cov) in enumerate(zip(multi_mean, multi_covariance)):
-                stracks[i].mean = mean
-                stracks[i].covariance = cov
+        # The application's elapsed-time transition belongs to this engine's
+        # filter. A global fixed-dt filter silently ignores irregular frame time.
+        for st in stracks:
+            st.predict()
 
     @staticmethod
     def multi_gmc(stracks, H=np.eye(2, 3)):

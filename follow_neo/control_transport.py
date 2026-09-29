@@ -1,8 +1,8 @@
-"""Interruptible command acknowledgements; no reconnect or command replay.
+"""Bounded acknowledgements and FIFO neutralization of manual RC changes.
 
-After an interrupted exchange, bare `success` replies cannot be correlated.
-Send a best-effort neutral/disable pair and close that channel without claiming
-remote confirmation. A receiver-side watchdog is still required for link loss.
+MSDKRemote handles RC synchronously and queues one reply per line in order.
+Only RC may have a neutral replacement outstanding. Both replies must arrive
+before the ORIGINAL deadline; a missing reply always closes the channel.
 """
 import socket
 import time
@@ -20,25 +20,44 @@ class ControlChannel:
 
     def command(self, text, *, interruptible=True, motion_keys=None):
         timeout = RC_ACK_TIMEOUT if text.startswith('rc ') else 2.
-        def check():
-            if interruptible:
-                reason = self.guard(motion_keys)
-                if reason:
-                    raise RuntimeError('Control interrupted: '+reason)
-        check()
-        self.sequence += 1
-        seq = self.sequence
+        changed='movement keys changed while acknowledgement was pending'
+        neutralized=False
+        reason=self.guard(motion_keys) if interruptible else None
+        if reason==changed and text.startswith('rc '):
+            text='rc 0 0 0 0';motion_keys=None;neutralized=True
+        elif reason:raise RuntimeError('Control interrupted: '+reason)
+        if self.pending or self.buffer:
+            raise RuntimeError('Unexpected outstanding control reply')
         started = time.monotonic()
-        self.emit('control_command_attempt', {'sequence':seq, 'command':text, 'sent_at':started})
-        self.pending = True
-        self.sock.settimeout(.10)
-        self.sock.sendall((text+'\r\n').encode('ascii'))
+        outstanding=[]
+        def send(value):
+            self.sequence+=1;stamp=time.monotonic()
+            outstanding.append((self.sequence,value,stamp))
+            self.emit('control_command_attempt',{'sequence':self.sequence,'command':value,'sent_at':stamp})
+            self.pending=True;self.sock.settimeout(.10)
+            self.sock.sendall((value+'\r\n').encode('ascii'))
+        send(text)
         deadline = started+timeout
-        while b'\n' not in self.buffer:
-            check()
+        while outstanding:
+            reason=self.guard(None if neutralized else motion_keys) if interruptible else None
+            if reason==changed and text.startswith('rc ') and not neutralized:
+                # Deliver zero immediately; an old success can acknowledge ONLY
+                # its original RC. Do not resume until the separate zero ACK arrives.
+                neutralized=True
+                send('rc 0 0 0 0')
+                self.emit('control_motion_neutralizing',{'reason':'movement_keys_changed','deadline':deadline})
+            elif reason:raise RuntimeError('Control interrupted: '+reason)
             remaining = deadline-time.monotonic()
             if remaining <= 0:
                 raise TimeoutError(f'Control acknowledgement exceeded {timeout:.2f}s')
+            if b'\n' in self.buffer:
+                reply,self.buffer=self.buffer.split(b'\n',1)
+                seq,value,sent=outstanding.pop(0)
+                reply=reply.decode('utf-8',errors='replace').strip()
+                self.emit('control_command_ack',{'sequence':seq,'command':value,'reply':reply,
+                    'ack_ms':(time.monotonic()-sent)*1000})
+                if reply!='success':raise RuntimeError(reply)
+                continue
             self.sock.settimeout(min(POLL_SECONDS,remaining))
             try:
                 chunk = self.sock.recv(4096)
@@ -49,12 +68,10 @@ class ControlChannel:
             self.buffer += chunk
             if len(self.buffer)>8192:
                 raise RuntimeError('Control reply too long')
-        reply,self.buffer=self.buffer.split(b'\n',1)
         self.pending=False
-        reply=reply.decode('utf-8',errors='replace').strip()
-        self.emit('control_command_ack', {'sequence':seq,'command':text,'reply':reply,
-                  'ack_ms':(time.monotonic()-started)*1000})
-        if reply!='success':raise RuntimeError(reply)
+        if self.buffer:raise RuntimeError('Unexpected extra control reply')
+        if neutralized:self.emit('control_motion_neutralized',{'server_acknowledged':True})
+        return not neutralized
 
     def stop_unconfirmed(self, reason):
         delivered=False

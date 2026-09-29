@@ -43,6 +43,7 @@ class ManualControl:
         self.dance_status = 'Dance off'
         self.axis_limits = dict(DEFAULT_AXIS_LIMITS)
         self.motion_hold = False
+        self.last_acknowledged=None
         self.lock = threading.Lock()
         self.stop_event = threading.Event()
         self.keys = set()
@@ -197,7 +198,8 @@ class ManualControl:
                             active=(wanted and self.enabled and not self.motion_hold
                                     and gate_reason.startswith(('Tracking /','Kalman recovery /'))
                                     and phase in ('APPROACH','VISUAL_HOLD','HOLD_REACQUIRE','CONFIRM_STOP'))
-                            shaped_values=self.smoother.update(raw_values,command_time,active)
+                            shaped_values=self.smoother.update(raw_values,command_time,active,
+                                damped_yaw=bool(decision and decision.get('centering_control')))
                         if gate_reason.startswith('Kalman recovery /'):
                             # Do not let the smoothing history delay the coast
                             # caps/decay, or carry old roll past its deadline.
@@ -229,8 +231,13 @@ class ManualControl:
                     self.on_event('control_released', {})
                     self.status = 'Control released | E: enable keyboard'
                 if authority and wanted:
-                    command('rc ' + ' '.join(f'{value:.4f}' for value in values),
+                    applied=command('rc ' + ' '.join(f'{value:.4f}' for value in values),
                             motion_keys=command_keys if mode=='MANUAL' and any(values) else None)
+                    if not applied:
+                        self.last_acknowledged=dict(time=time.monotonic(),mode='MANUAL',values=[0.,0.,0.,0.],
+                            reason='Key change: neutral acknowledged')
+                        continue  # Re-read current keys; never replay the superseded command.
+                    self.last_acknowledged=dict(time=time.monotonic(),mode=mode,values=list(values),reason=gate_reason)
                     self.on_event('flight_command', {'mode': mode, 'command': 'rc',
                         'selected_mode': selected_mode,
                         'axis_limits': dict(zip(AXES, limits)),
@@ -245,6 +252,7 @@ class ManualControl:
                         'prediction_recovery':decision.get('prediction_recovery',False) if decision else False,
                         'prediction_forward_allowed':decision.get('prediction_forward_allowed',False) if decision else False,
                         'prediction_quality':decision.get('prediction_quality') if decision else None,
+                        'centering_control':decision.get('centering_control') if decision else None,
                         'track_support':decision.get('track_support') if decision else None,
                         'shaped_values':list(shaped_values),
                         'policy_values':list(policy_values) if policy_values is not None else None,

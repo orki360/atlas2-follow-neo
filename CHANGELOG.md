@@ -2,6 +2,81 @@
 
 ## Version 11.1 — Shared version source and visible GUI label — 2026-09-28
 
+### Search direction revision 4 — 2026-09-29
+
+- Choose the first scan side from consistent measured target motion before loss,
+  instead of always starting left. If motion is inconclusive, use the last seen
+  image side; a centred stationary target retains a deterministic left fallback.
+- Freeze the preferred direction for the loss episode. Continue toward the same
+  boundary after BOOST when angular room remains. If that boundary has already
+  been reached, reverse inside the original span; never recenter or extend the
+  configured range merely to continue toward the lost target.
+- Skip or end BOOST early when the remaining angle is within a conservative
+  heading-rate braking margin (3 degrees plus 0.45 seconds of closing rate).
+  Apply the same margin at the BOOST send gate. Keep normal scan yaw caps,
+  candidate holds, heading freshness checks and the original shared deadline.
+- Show the first search side in the GUI and log its evidence source, braking
+  margin and BOOST exit reason. Display version 11.1 / `search-direction-4`.
+- Add symmetric left/right regressions and the recorded 01:10.875 loss case.
+  See `SEARCH_DIRECTION_VALIDATION.md`. MSDKRemote and user settings are unchanged.
+
+### Single-target acquisition revision 3 — 2026-09-29
+
+- Fix an initial-acquisition deadlock found in session `20260929_105825_992149`:
+  the application retained a tentative BoT ID after BoT removed its track,
+  while recovery required an already-confirmed target. Strong later detections
+  could therefore never reach TRACK and Dance continued sending zero commands.
+- Separate tentative acquisition from confirmed identity. Release a failed
+  provisional ID without resetting BoT-SORT or changing confirmed-target recovery.
+  A new internal track can confirm the same coherent acquisition sequence.
+- Require two distinct, geometrically coherent strong measurements for initial
+  confirmation. Weak measurements can preserve existing evidence across short
+  confidence dips, but cannot initiate or confirm a target. Limit missing-frame
+  gaps to 150ms and total initial evidence age to 600ms. Reject ambiguous candidates;
+  compensate initial evidence for camera motion without adding a motion filter.
+- Keep Dance output zero before confirmation. Show `Verifying target` and
+  `Reacquiring target` instead of a generic wait when acquisition is in progress.
+- Display revision `single-target-3` beside version 11.1. Preserve the stabilization
+  tuning, user configuration, Android application and wire protocol.
+- Add regression coverage for the recorded 88.4% -> 77.4% -> 89.5% failure,
+  expired/weak/ambiguous evidence, ID replacement, camera motion and Dance gating.
+  See `SINGLE_TARGET_VALIDATION.md` for recorded-input replay results.
+
+### Stabilization revision 2 — 2026-09-29
+
+- Replace ordinary live yaw centering with continuous proportional demand,
+  measured image-error rate and fresh aircraft-heading rate damping. Brake
+  before crossing the image centre; remove the yaw minimum-command floor and
+  delayed reversal. Keep a bounded acceleration ramp and pass reversals via zero.
+- Reduce positive forward demand when the target is off-centre or the aircraft
+  turns quickly. Restore forward demand gradually; preserve spacing/braking gates.
+- Recover against the last real target box carried by camera motion, alongside
+  the BoT prediction. Permit plausible partial edge boxes and small overlap without
+  accepting isolated or ambiguous detections. No second Kalman filter is added.
+- Preserve coherent candidate evidence across gaps up to 150ms and confidence
+  dips. Broad returns require eight observations over 250ms, including at least
+  three strong observations. Limit evidence to a 600ms window and verification
+  pause to 800ms per loss; candidate pauses never extend an active scan deadline.
+- Fix BoT batch prediction to use each track's configured source-time interval.
+- Brake scans approaching angular boundaries and anchor the scan to heading at
+  the last detection when available. BOOST considers the box's departing edge,
+  requires outward-motion evidence, and retains its separate 350ms maximum.
+- Add **Auto scan time for angle (max 10 s)**, enabled by default. The requested
+  time is a minimum in auto mode: a 60-degree scan with 2 seconds requested gets
+  8.1 seconds. Disable auto to retain the exact configured timeout. Log requested
+  and effective time and whether both boundaries were reached; coverage is not
+  guaranteed at low yaw caps. Total angle still means half to either side.
+- On ordinary keyboard release/reversal during an RC exchange, send neutral
+  immediately and require separate FIFO acknowledgements for the old command
+  and neutral before resuming. Retain the original 250ms deadline and failure
+  handling; healthy delayed replies no longer cause unnecessary disconnection.
+- Show **v11.1 / stabilization-2**, candidate evidence and recent acknowledged
+  RC values in the GUI. Add centering, candidate rejection, scan coverage and
+  neutralization diagnostics. Keep version/revision in `VERSION.py`.
+- Leave MSDKRemote, the wire protocol, user configuration, models and installed
+  dependencies unchanged. See `STABILIZATION_VALIDATION.md` for offline checks,
+  replay results, limitations and the next flight observations.
+
 ### Continuous single-target tracking — 2026-09-28
 
 - Live tracking now uses BoT-SORT's Kalman state and camera-motion compensation

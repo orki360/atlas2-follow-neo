@@ -7,6 +7,7 @@ from .policy import SmartTrackingController, DeterministicTrackingPolicy
 from .spacing import VisualSpacingController
 from .edge_search import EdgeYawSearch
 from .recovery_search import RecoverySearch
+from .centering import DampedTrackingController
 from .prediction import (COAST_SECONDS, COAST_YAW, COAST_VERTICAL, STABLE_FORWARD_SECONDS,
                          fade, forward_fade, continuation_threshold)
 
@@ -27,7 +28,7 @@ class FollowController:
         return BBoxTracker(size)
 
     def reset(self):
-        self.tracker=self._new_tracker(); self.smart=SmartTrackingController()
+        self.tracker=self._new_tracker(); self.smart=self._new_centering()
         self.policy=DeterministicTrackingPolicy(); self.spacing=VisualSpacingController()
         self.last_accepted=None; self.rejected=True; self.result_time=None
         self.frame_size=None; self.result_id=None
@@ -39,10 +40,13 @@ class FollowController:
 
     def restart_control(self):
         """Reset control history and spacing without erasing target identity."""
-        self.smart=SmartTrackingController();self.policy=DeterministicTrackingPolicy()
+        self.smart=self._new_centering();self.policy=DeterministicTrackingPolicy()
         self.spacing=VisualSpacingController();self.last_center_command=self.last_track_command=None
         self.edge_search.reset()
         self.control_result_floor=self.result_id
+
+    def _new_centering(self):
+        return DampedTrackingController() if self.tracker_backend=='botsort' else SmartTrackingController()
 
     def observe(self,detections,source_time,now,frame_id,size,settings,image=None):
         if self.frame_size is not None and self.frame_size!=size: self.reset()
@@ -81,7 +85,11 @@ class FollowController:
         stale=stream_stale or result_stale
         after_restart=self.control_result_floor is None or (self.result_id is not None and self.result_id>self.control_result_floor)
         real_fresh=not self.rejected and age<=.25 and after_restart
-        raw,ex,ey=self.smart.compute(k,width,height,age,not real_fresh,now,settings)
+        centering_kwargs={}
+        if self.tracker_backend=='botsort':
+            measured_error=None if self.last_accepted is None else (self.last_accepted.box.cx-width*.5)/(width*.5)
+            centering_kwargs=dict(heading=heading,measurement_time=mtime,measured_error=measured_error)
+        raw,ex,ey=self.smart.compute(k,width,height,age,not real_fresh,now,settings,**centering_kwargs)
         raw.forward*=settings.forward_limit
         current_center=replace(raw);measurement_scale=1. if real_fresh else 0.
         std=uncertainty.get('position_std_px')
@@ -102,6 +110,8 @@ class FollowController:
         cmd,projected=self.spacing.update(now,self.policy.state=='TRACK',t.confirmed,
                     not real_fresh,clipped,self.policy.reason=='search_timeout',
                     t.measurement_id,mtime,age,raw_width,k.width/width,ex,ey,cmd,settings)
+        if self.tracker_backend=='botsort' and cmd.forward>0:
+            cmd.forward*=self.smart.forward_factor
         if real_fresh and t.confirmed and self.policy.state=='TRACK':
             self.last_center_command=replace(cmd)
         previous=self.last_center_command
@@ -144,6 +154,7 @@ class FollowController:
         return {'state':self.policy.state,'reason':self.policy.reason,
                 'tracking':t.diagnostics() if self.tracker_backend=='botsort' else {'backend':'legacy'},
                 'candidate_pending':pending,
+                'centering_control':getattr(self.smart,'diagnostics',None),
                 'raw_detections':self.raw_detections,'raw_detection_time':self.result_time,
                 'selected_measurement_box':None if t.accepted is None else list(vars(t.accepted.box).values()),
                 'edge_search':search,

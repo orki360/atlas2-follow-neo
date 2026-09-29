@@ -89,6 +89,9 @@ def render_bundle(frame,analysis,decision,mode,stale_seconds=.75,now=None,output
             label=label.replace('KALMAN','BoT-SORT')
             if tracking.get('target_id') is not None:
                 label+=f" target {tracking.get('logical_target_id',tracking['target_id'])} / BoT {tracking['target_id']}"
+        if candidates and predicted:
+            cv2.putText(image,f"CANDIDATE: {tracking.get('association_reason','unmatched')} | evidence {tracking.get('candidate_hits',0)}",
+                        (12,60),cv2.FONT_HERSHEY_SIMPLEX,.55,(0,180,255),1)
         if not predicted and confidence is not None: label+=f' {confidence:.2f}'
         if box: draw_box(image,box,BLUE,label,dashed=predicted,scale=scale)
         metadata.update(track_support=support,measurement_age_ms=age)

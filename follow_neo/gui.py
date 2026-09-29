@@ -14,13 +14,13 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import cv2
 from PIL import Image, ImageTk
-from . import __version__
+from . import __version__, __revision__
 from .types import Settings, settings_from_config
 from .session import FollowSession
 from .overlay import render_bundle
 from .models import DEFAULT_MODEL, LEGACY_MODEL
 from .manual import ManualControl, MOVEMENT_KEYS, AXES, DEFAULT_AXIS_LIMITS
-from .control_status import control_indicator
+from .control_status import control_indicator, acknowledged_command_text, target_status_text
 
 
 # Windows keeps these virtual-key codes stable even when the active keyboard
@@ -73,7 +73,7 @@ class FollowLabWindow:
         if self.config_path.exists():
             try: cfg=json.loads(self.config_path.read_text(encoding='utf-8'))
             except (OSError,ValueError): pass
-        self.root.title(f'ATLAS2 Follow NEO | Version {__version__} - BoT-SORT')
+        self.root.title(f'ATLAS2 Follow NEO | Version {__version__} / {__revision__} - BoT-SORT')
         self.root.geometry('1440x880'); self.root.minsize(1200,760)
         self.root.configure(bg='#101820')
         self.root.protocol('WM_DELETE_WINDOW',self.close)
@@ -92,6 +92,8 @@ class FollowLabWindow:
         self.version_label=ttk.Label(top,text=f'v{__version__}',foreground='#6ad5cb',
                                      font=('Segoe UI',12,'bold'))
         self.version_label.pack(side='left',padx=(16,0))
+        self.revision_label=ttk.Label(top,text=__revision__,foreground='#d9b56c')
+        self.revision_label.pack(side='left',padx=8)
         ttk.Label(top,text='BoT-SORT  |  NEO DANCE + MANUAL KEYBOARD',foreground='#6ad5cb').pack(side='right')
         bar=ttk.Frame(root,padding=(12,4)); bar.pack(fill='x')
         ttk.Label(bar,text='Phone IP').pack(side='left')
@@ -223,7 +225,7 @@ class FollowLabWindow:
             ttk.Spinbox(row,textvariable=self.search_vars[key],from_=lo,to=hi,
                         increment=step,width=7).pack(side='right')
         ttk.Button(self.search_bar,text='Apply search',command=self.apply_search).pack(fill='x',pady=5)
-        ttk.Label(self.search_bar,text='One directional arc; angle OR time limit.\n0 deg disables turning. Heading: TCP 9997.',
+        ttk.Label(self.search_bar,text='Left / right scan around the loss heading.\nAuto time may extend the requested budget, up to 10 s.\n0 deg disables turning. Heading: TCP 9997.',
                   foreground='#8cbbb8',wraplength=300).pack(anchor='w')
         ttk.Label(controls_page,text='W/S: up/down   A/D: yaw\nArrows: forward/back/left/right\n20 deg = 10 deg each side.\nBrief edge catch-up uses 100% yaw; scanning uses the normal yaw cap.',wraplength=300).pack(anchor='w',pady=6)
         self.state=tk.StringVar(value='DISCONNECTED')
@@ -254,6 +256,8 @@ class FollowLabWindow:
         ttk.Checkbutton(settings,text='Continuous Dance / Follow & Hold',variable=self.hold).grid(row=len(controls),columnspan=2,sticky='w',pady=6)
         self.edge_search_on=tk.BooleanVar(value=bool(values['edge_search_enabled']))
         ttk.Checkbutton(self.search_bar,text='Lost-target recovery: BOOST / scan',variable=self.edge_search_on).pack(anchor='w',pady=4)
+        self.search_auto=tk.BooleanVar(value=bool(values['search_auto_duration']))
+        ttk.Checkbutton(self.search_bar,text='Auto scan time for angle (max 10 s)',variable=self.search_auto).pack(anchor='w',pady=4)
         ttk.Button(settings,text='Apply / keep target',command=self.apply).grid(row=len(controls)+2,columnspan=2,sticky='ew')
         self.settings_note=tk.StringVar(value='Settings ready')
         ttk.Label(settings,textvariable=self.settings_note,foreground='#d9b56c',wraplength=285).grid(row=len(controls)+3,columnspan=2,sticky='w',pady=6)
@@ -264,7 +268,7 @@ class FollowLabWindow:
         self.notice=tk.StringVar(value='Enter the IP shown in MSDKRemote. Start its Video Server first.')
         ttk.Label(root,textvariable=self.notice,wraplength=1250,padding=10,foreground='#d9b56c').pack(side='bottom',fill='x',before=body)
         self.settings=Settings(**self.loaded_values)
-        for var in list(self.vars.values())+[self.hold,self.edge_search_on]: var.trace_add('write',self.mark_dirty)
+        for var in list(self.vars.values())+[self.hold,self.edge_search_on,self.search_auto]: var.trace_add('write',self.mark_dirty)
         self.compute.trace_add('write',lambda *a:self.notice.set('Compute changes take effect on the next Connect.'))
         self.root.after(50,self.refresh)
 
@@ -273,6 +277,7 @@ class FollowLabWindow:
         for key,var in self.vars.items(): data[key]=float(var.get())/(100 if key in self.percent else 1)
         data['follow_and_hold']=self.hold.get()
         data['edge_search_enabled']=self.edge_search_on.get()
+        data['search_auto_duration']=self.search_auto.get()
         return Settings(**data).validate()
 
     def save_config(self):
@@ -567,11 +572,12 @@ class FollowLabWindow:
             angle=float(self.search_vars['search_yaw_degrees'].get())
             seconds=float(self.search_vars['edge_search_seconds'].get())
             updated=replace(self.settings,search_yaw_degrees=angle,edge_search_seconds=seconds,
-                            edge_search_enabled=self.edge_search_on.get()).validate()
+                            edge_search_enabled=self.edge_search_on.get(),
+                            search_auto_duration=self.search_auto.get()).validate()
             previous=self.settings;self.settings=updated
             try:self.save_config()
             except Exception:self.settings=previous;raise
-            if self.session:self.session.configure_search(angle,seconds,self.edge_search_on.get())
+            if self.session:self.session.configure_search(angle,seconds,self.edge_search_on.get(),self.search_auto.get())
             self.mark_dirty()
             self.notice.set('Scan saved; target retained. Total angle is split equally left/right. New limits apply to the next loss; 0 deg stops recovery.')
             self.canvas.focus_set()
@@ -629,7 +635,7 @@ class FollowLabWindow:
             elapsed=max(.01,now-self.rates[0][0]); source_fps=(s.receiver.count-self.rates[0][1])/elapsed
             video_fps=(s.receiver.processed_count-self.rates[0][3])/elapsed
             inference_fps=(s.inference_count-self.rates[0][2])/elapsed
-            self.state.set(s.receiver.state if not decision else decision['state'])
+            self.state.set(s.receiver.state if not decision else target_status_text(decision))
             if s.receiver.error: self.state.set('VIDEO ERROR'); self.notice.set(s.receiver.error+' Disconnect, then retry.')
             elif s.model_error: self.state.set('MODEL ERROR'); self.notice.set(s.model_error)
             elif s.log.error: self.notice.set('Log write failed: '+s.log.error)
@@ -639,6 +645,8 @@ class FollowLabWindow:
                 search_text=(f"Recovery: {search.get('phase','--')} | "
                              f"offset {search.get('scan_offset_degrees',0):+.1f} deg\n"
                              f"Total scan {search.get('angle_degrees',self.settings.search_yaw_degrees):g} deg | {search.get('duration_seconds',self.settings.edge_search_seconds):g} s\n"
+                             f"Requested {search.get('requested_duration_seconds',self.settings.edge_search_seconds):g} s | both sides reached: {search.get('coverage_complete',False)}\n"
+                             f"First search: { {-1:'LEFT',1:'RIGHT'}.get(search.get('first_scan_direction'),'--')}\n"
                              f"{search.get('reason','--')}\n{s.heading.status}")
                 result=s.result.get(); inference='--' if result is None else f"{result['inference_ms']:.1f} ms"
                 compute=s.model_info.get('compute',{}) if s.model_info else {}
@@ -649,6 +657,8 @@ class FollowLabWindow:
                     f"Track source: {decision.get('track_support','--')}\n"
                     f"Target {decision.get('tracking',{}).get('logical_target_id','--')} / BoT ID {decision.get('tracking',{}).get('target_id','--')}\n"
                     f"{decision.get('tracking',{}).get('association_reason','')}\n"
+                    f"Candidate evidence: {decision.get('tracking',{}).get('candidate_hits',0)} frames\n"
+                    f"{acknowledged_command_text(self.manual,now)}\n"
                     +('Short forward continuation\n' if decision.get('prediction_forward_allowed') else '')+
                     f"Spacing: {decision.get('spacing_phase','--')}\n"
                     f"Width: {100*decision.get('raw_width_ratio',0):.1f}%\n"

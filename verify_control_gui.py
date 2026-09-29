@@ -16,6 +16,8 @@ with tempfile.TemporaryDirectory() as folder:
         root.update_idletasks()
         assert VERSION=='11.1'
         assert window.version_label.cget('text')=='v11.1'
+        assert window.revision_label.cget('text')=='search-direction-4'
+        assert window.search_auto.get() is True
         assert window.session is None and window.manual is None
         assert callable(window.key_state_reader)
         texts=[]
@@ -27,6 +29,7 @@ with tempfile.TemporaryDirectory() as folder:
         assert any('total' in text.lower() and 'scan' in text.lower() for text in texts),texts
         assert 'Apply / keep target' in texts
         assert 'Loss grace (seconds)' in texts
+        assert 'Auto scan time for angle (max 10 s)' in texts
         assert float(window.vars['search_grace_seconds'].get())==.45
         print('PASS: actual Tk GUI initializes; version 11.1 and total scan angle labels; physical keyboard reader enabled; no connections.')
     finally:

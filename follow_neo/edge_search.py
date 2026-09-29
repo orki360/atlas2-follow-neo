@@ -119,6 +119,11 @@ def yaw_override(decision,now,dance_started=None):
         if not isinstance(limit,(int,float)) or not math.isfinite(limit) or not 0<limit<=90:return 0.
         start=search.get('started')
         if not isinstance(start,(int,float)) or not 0<=now-start<.35:return 0.
+        margin=search.get('boost_brake_margin_degrees',0.)
+        progress=search.get('angle_progress_degrees')
+        if (not isinstance(margin,(int,float)) or not math.isfinite(margin) or margin<0
+            or not isinstance(progress,(int,float)) or not math.isfinite(progress)
+            or limit-progress<=margin):return 0.
     if search.get('active') is not True:return 0.
     names=('started','until','source_time','heading_time','angle_degrees','angle_progress_degrees','duration_seconds')
     if not all(isinstance(search.get(k),(int,float)) and math.isfinite(search[k]) for k in names):return 0.

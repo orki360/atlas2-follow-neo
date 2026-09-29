@@ -13,7 +13,7 @@ from .video import VideoReceiver, LatestValue
 from .detector import OnnxDroneDetector, DetectorSettings
 from .controller import FollowController
 from .recording import VideoRecorder
-from . import __version__
+from . import __version__, __revision__
 from .botsort_tracker import low_threshold
 from .cadence import FrameRateGate
 from .telemetry import HeadingReceiver
@@ -70,7 +70,7 @@ class FollowSession:
              'codec':codec,'compute_requested':compute_mode,'device_id':device_id,'settings':asdict(self.settings),
              'model':self.model_manifest,'recording_profile':recording_profile,
              'tracking_backend':'BoT-SORT','tracking_reid':False,
-             'tracking_motion':'botsort_only','tracking_revision':'continuity-1',
+             'tracking_motion':'botsort_only','tracking_revision':__revision__,'control_revision':'damped-yaw-1',
              'flight_control':'explicit_manual_or_dance_enable_required',
              'timestamp_origin':'local_decoder_monotonic_not_camera_exposure'})
         raw_path=self.output/f'video.{codec}' if record_raw else None
@@ -107,11 +107,12 @@ class FollowSession:
         with self.settings_lock: self.generation+=1
         self.reset_event.set()
 
-    def configure_search(self,angle,seconds,enabled):
+    def configure_search(self,angle,seconds,enabled,auto_duration=None):
         # Search settings do not change the detector, tracker or distance state.
         with self.settings_lock:
             self.settings=replace(self.settings,search_yaw_degrees=float(angle),
-                edge_search_seconds=float(seconds),edge_search_enabled=bool(enabled)).validate()
+                edge_search_seconds=float(seconds),edge_search_enabled=bool(enabled),
+                search_auto_duration=self.settings.search_auto_duration if auto_duration is None else bool(auto_duration)).validate()
             saved=asdict(self.settings)
         self.log.write('search_settings',{'settings':saved,'tracking_reset':False,
             'active_arc_policy':'existing arc keeps its original budget; zero/disabled cancels'})

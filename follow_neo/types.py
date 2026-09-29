@@ -72,6 +72,7 @@ class Settings:
     edge_search_seconds: float = 4.0
     search_yaw_degrees: float = 90.0
     search_grace_seconds: float = .45
+    search_auto_duration: bool = True
     stale_seconds: float = .75
     reacquire_seconds: float = .75
     stop_width: float = .20
@@ -85,6 +86,8 @@ class Settings:
     def validate(self):
         if not isinstance(self.edge_search_enabled,bool):
             raise ValueError('edge_search_enabled must be a boolean')
+        if not isinstance(self.search_auto_duration,bool):
+            raise ValueError('search_auto_duration must be a boolean')
         bounds = {'confidence':(.05,.95), 'nms_iou':(.05,.95),
                   'new_track_confidence':(.05,.99), 'inference_fps':(1,60), 'video_fps':(1,60),
                   'edge_search_seconds':(2,10), 'search_yaw_degrees':(0,180),
