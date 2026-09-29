@@ -144,22 +144,24 @@ class ScanTests(unittest.TestCase):
         d=self.step(11.2,3);values,status=dance_command(self.decision(d,11.2),11.2,9)
         self.assertTrue(status.startswith('Scan /'));self.assertLess(abs(values[0]),1)
         self.assertEqual(values[1:],(0.,0.,0.))
-    def test_boost_switches_at_half_angle_boundary(self):
-        self.begin(outward=True);d=self.step(10.7,10)
+    def test_boost_switches_at_full_directional_angle_boundary(self):
+        self.begin(outward=True);d=self.step(10.7,20)
         self.assertEqual(d['phase'],'SCAN');self.assertEqual(d['scan_yaw'],0)
     def test_zero_angle_and_lost_heading_stop_both_phases(self):
         self.begin();self.s=replace(self.s,search_yaw_degrees=0)
         self.assertFalse(self.step(10.8,0)['active'])
         self.begin(outward=True)
         d=self.r.update(10.8,True,False,'APPROACH',False,self.s,None)
-        self.assertFalse(d['active']);self.assertEqual(d['reason'],'heading_unavailable')
+        self.assertFalse(d['active']);self.assertEqual(d['reason'],'waiting_heading')
+        d=self.r.update(11.2,True,False,'APPROACH',False,self.s,None)
+        self.assertEqual(d['reason'],'heading_unavailable');self.assertTrue(d['consumed'])
     def test_reacquisition_pauses_immediately_and_three_measurements_finish(self):
         self.begin()
         for i in range(3):
             t=10.8+i*.04
             self.r.observe(True,False,True,Box(600,320,680,360),Kinematics(),1280,720,t,30+i,self.s)
             d=self.step(t,0);self.assertFalse(d['active'])
-        self.assertEqual(d['reason'],'reacquired')
+        self.assertEqual(d['phase'],'IDLE');self.assertFalse(d['consumed'])
     def test_heading_wraparound_does_not_expand_scan(self):
         self.begin(yaw=179);d=self.step(10.8,-176)
         self.assertAlmostEqual(d['scan_offset_degrees'],5)

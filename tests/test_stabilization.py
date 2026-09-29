@@ -116,7 +116,7 @@ class SearchTimingTests(unittest.TestCase):
         self.r.update(10,False,False,'APPROACH',False,self.s,heading(10))
         return self.r.update(10.6,True,False,'APPROACH',False,self.s,heading(10.6,4))
     def test_auto_budget_and_loss_heading_anchor(self):
-        d=self.start();self.assertAlmostEqual(d['duration_seconds'],8.1)
+        d=self.start();self.assertAlmostEqual(d['duration_seconds'],4.75)
         self.assertEqual(d['requested_duration_seconds'],2);self.assertEqual(d['scan_offset_degrees'],4)
     def test_fixed_budget_is_preserved_and_auto_is_capped(self):
         self.assertEqual(self.start(False)['duration_seconds'],2)

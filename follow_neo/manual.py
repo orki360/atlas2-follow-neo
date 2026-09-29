@@ -6,6 +6,8 @@ import math
 from .dance import dance_command, DanceSmoother
 from .edge_search import yaw_override
 from .control_transport import ControlChannel
+from .recovery_search import scan_command
+from .search_test import SearchTest
 
 
 MOVEMENT_KEYS = frozenset(('w', 's', 'a', 'd', 'up', 'down', 'left', 'right'))
@@ -44,6 +46,7 @@ class ManualControl:
         self.axis_limits = dict(DEFAULT_AXIS_LIMITS)
         self.motion_hold = False
         self.last_acknowledged=None
+        self.search_test=None;self.heading_provider=None
         self.lock = threading.Lock()
         self.stop_event = threading.Event()
         self.keys = set()
@@ -74,6 +77,7 @@ class ManualControl:
 
     def start_dance(self):
         with self.lock:
+            self._stop_search_test('dance_selected')
             self.keys.clear()
             self.action = None
             self.decision = None
@@ -86,6 +90,7 @@ class ManualControl:
 
     def manual_mode(self):
         with self.lock:
+            self._stop_search_test('manual_selected')
             self.mode = 'MANUAL'
             self.smoother.reset()
             self.keys.clear()
@@ -95,6 +100,7 @@ class ManualControl:
 
     def enable(self):
         with self.lock:
+            if self.mode=='DANCE' and not (self.wanted and self.enabled):self.dance_started=time.monotonic()
             self.decision = None
             self.motion_hold = False
             self.wanted = True
@@ -103,6 +109,7 @@ class ManualControl:
 
     def release(self):
         with self.lock:
+            self._stop_search_test('control_released')
             self.keys.clear()
             self.wanted = False
             self.smoother.reset()
@@ -115,6 +122,7 @@ class ManualControl:
             raise ValueError(action)
         with self.lock:
             if self.enabled and self.wanted and self.action is None:
+                self._stop_search_test('flight_action')
                 self.keys.clear()
                 self.motion_hold = True
                 self.dance_status = 'Flight action: Enable (E) to resume movement'
@@ -125,6 +133,40 @@ class ManualControl:
     def stop(self):
         self.release()
         self.stop_event.set()
+
+    def _stop_search_test(self,reason):
+        if self.search_test:
+            self.search_test.stop(time.monotonic(),reason)
+            if reason in ('keyboard_override','dance_selected','flight_action'):
+                self.search_test.finish(time.monotonic())
+        if self.mode=='SEARCH_TEST':self.mode='MANUAL';self.keys.clear()
+
+    def stop_search_test(self):
+        with self.lock:self._stop_search_test('operator_stop')
+
+    def start_search_test(self,settings,heading_provider,scenario):
+        with self.lock:
+            if not self.enabled or not self.wanted or self.motion_hold or self.stop_event.is_set():
+                raise ValueError('Connect control and Enable (E) before a search test')
+            if time.monotonic()-self.updated>.35:raise ValueError('Fresh GUI heartbeat required')
+            if self.search_test and not self.search_test.finished:
+                raise ValueError('Wait for the 2-second post-stop measurement to finish')
+            heading=heading_provider();now=time.monotonic()
+            self.search_test=SearchTest(settings,heading,now,scenario,self.on_event)
+            self.heading_provider=heading_provider;self.mode='SEARCH_TEST'
+            self.keys.clear();self.action=None;self.smoother.reset()
+            self.dance_status='Search test / '+scenario
+        return True
+
+    def control_snapshot(self):
+        with self.lock:
+            active=bool(self.enabled and self.wanted and not self.stop_event.is_set()
+                        and time.monotonic()-self.updated<=.35)
+            return dict(active=active,mode=self.mode,reason=self.dance_status,
+                acknowledged=self.last_acknowledged,motion_hold=self.motion_hold,
+                keyboard_override=bool(self.keys),time=time.monotonic(),
+                search_test=dict(self.search_test.last_sample or {},finished=self.search_test.finished)
+                    if self.search_test else None)
 
     def _run(self):
         sock = None
@@ -138,6 +180,8 @@ class ManualControl:
                 if not self.wanted:return 'control released'
                 if time.monotonic()-self.updated>.35:return 'UI heartbeat lost'
                 if motion_keys is not None and set(motion_keys)!=self.keys:
+                    return 'movement keys changed while acknowledgement was pending'
+                if motion_keys is not None and (self.mode!=selected_mode or self.motion_hold):
                     return 'movement keys changed while acknowledgement was pending'
             return None
 
@@ -154,6 +198,7 @@ class ManualControl:
                     command_time=time.monotonic()
                     fresh = command_time - self.updated <= .35
                     if not fresh:
+                        self._stop_search_test('ui_heartbeat_lost')
                         self.wanted = False
                         self.keys.clear()
                         self.action = None
@@ -164,6 +209,18 @@ class ManualControl:
                     mode = self.mode
                     selected_mode = self.mode
                     decision = latest if self.decision_provider else self.decision
+                    test_values=None
+                    if self.search_test and not self.search_test.finished:
+                        if self.keys:self._stop_search_test('keyboard_override')
+                        heading=self.heading_provider();command_time=time.monotonic()
+                        test_values=self.search_test.update(heading,command_time,
+                            wanted and self.enabled and self.mode=='SEARCH_TEST' and not self.motion_hold)
+                        mode=selected_mode=self.mode
+                    if self.mode=='SEARCH_TEST':
+                        mode=selected_mode='SEARCH_TEST';values=test_values or (0.,0.,0.,0.)
+                        decision=self.search_test.decision
+                        self.dance_status='Search test / '+(self.search_test.reason or 'scanning')
+                        if self.search_test.finished:self.mode='MANUAL'
                     if mode == 'DANCE' and not self.keys:
                         values, self.dance_status = dance_command(decision, command_time, self.dance_started)
                     elif mode == 'DANCE':
@@ -180,10 +237,14 @@ class ManualControl:
                     # This is the final transport gate shared by keyboard and
                     # Dance. Raw intents are normalized to [-1, 1], so each
                     # factor is also a hard maximum for the transmitted axis.
-                    gate_reason=self.dance_status if mode=='DANCE' else 'manual'
+                    gate_reason=self.dance_status if mode in ('DANCE','SEARCH_TEST') else 'manual'
                     edge_override=(mode=='DANCE' and not self.motion_hold
                                    and gate_reason.startswith('Search /')
                                    and yaw_override(decision,command_time,self.dance_started)!=0.)
+                    scan_override=(mode=='DANCE' and not self.motion_hold
+                        and gate_reason.startswith('Scan /') and decision
+                        and decision.get('edge_search',{}).get('yaw_full_scale') is True
+                        and scan_command(decision,command_time,self.dance_started)!=0.)
                     phase=decision.get('spacing_phase') if decision else None
                     if mode=='DANCE':
                         if edge_override:
@@ -208,7 +269,7 @@ class ManualControl:
                             self.smoother.values=shaped_values
                     else:
                         self.smoother.reset(); shaped_values=raw_values
-                    effective_limits=(1.,0.,0.,0.) if edge_override else limits
+                    effective_limits=(1.,0.,0.,0.) if edge_override or scan_override or mode=='SEARCH_TEST' else limits
                     values = tuple(value * limit
                                    for value, limit in zip(shaped_values, effective_limits))
                     # Log exactly what is put on the wire. Truncation never
@@ -232,7 +293,7 @@ class ManualControl:
                     self.status = 'Control released | E: enable keyboard'
                 if authority and wanted:
                     applied=command('rc ' + ' '.join(f'{value:.4f}' for value in values),
-                            motion_keys=command_keys if mode=='MANUAL' and any(values) else None)
+                            motion_keys=command_keys if any(values) else None)
                     if not applied:
                         self.last_acknowledged=dict(time=time.monotonic(),mode='MANUAL',values=[0.,0.,0.,0.],
                             reason='Key change: neutral acknowledged')
@@ -243,6 +304,8 @@ class ManualControl:
                         'axis_limits': dict(zip(AXES, limits)),
                         'effective_axis_limits':dict(zip(AXES,effective_limits)),
                         'edge_yaw_override':edge_override,
+                        'search_yaw_override':bool(edge_override or scan_override or mode=='SEARCH_TEST'),
+                        'search_test_run_id':self.search_test.run_id if mode=='SEARCH_TEST' else None,
                         'edge_search':decision.get('edge_search') if decision else None,
                         'raw_values': list(raw_values),
                         'command_time':command_time,'gate_reason':gate_reason,
@@ -276,6 +339,8 @@ class ManualControl:
         finally:
             self.enabled = False
             self.release()
+            if self.search_test and not self.search_test.finished:
+                self.search_test.finish(time.monotonic())
             if sock:
                 if authority and channel is not None:
                     if failure or channel.pending:

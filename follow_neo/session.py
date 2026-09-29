@@ -16,7 +16,7 @@ from .recording import VideoRecorder
 from . import __version__, __revision__
 from .botsort_tracker import low_threshold
 from .cadence import FrameRateGate
-from .telemetry import HeadingReceiver
+from .telemetry import HeadingReceiver,heading_snapshot
 from .models import resolve_model,DEFAULT_MODEL
 
 
@@ -63,6 +63,7 @@ class FollowSession:
         self.analysis=LatestValue(); self.inference_count=0; self.inference_skips=0
         self.model_info=None; self.model_error=None; self.started_at=time.monotonic()
         self.flight_commands_sent=0
+        self.control_provider=None;self.search_test_log=None
         self.output=self.root/'logs'/f'{datetime.now():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:6]}'
         self.output.mkdir(parents=True)
         self.log=SessionLog(self.output/'events.jsonl')
@@ -87,6 +88,21 @@ class FollowSession:
         if event=='flight_command' and data.get('server_acknowledged'):
             self.flight_commands_sent+=1
         self.log.write(event,data)
+        if event in ('control_error','control_released','control_enabled'):
+            self.restart_control()
+        if event=='search_test_started':
+            if self.search_test_log:self.search_test_log.close()
+            folder=self.output/('search_test_'+data['run_id']);folder.mkdir()
+            self.search_test_log=SessionLog(folder/'events.jsonl')
+        if getattr(self,'search_test_log',None) and (event.startswith('search_test_') or event.startswith('control_') or event=='flight_command'):
+            self.search_test_log.write(event,data)
+            if event=='search_test_summary':
+                self.search_test_log.close();self.search_test_log=None
+
+    def with_control_status(self,decision):
+        if not decision:return decision
+        control=self.control_provider() if self.control_provider else dict(active=False,mode='MANUAL',reason='Control disconnected')
+        return dict(decision,control_status=control)
 
     def get_settings(self):
         with self.settings_lock: return self.settings
@@ -131,7 +147,7 @@ class FollowSession:
 
     def _record_frame(self,frame):
         with self.recorder_lock: recorder=self.recorder
-        if recorder: recorder.submit(frame,self.decision.get())
+        if recorder: recorder.submit(frame,self.with_control_status(self.decision.get()))
 
     def _infer(self):
         try:
@@ -195,8 +211,11 @@ class FollowSession:
                     controller.observe(detections,src.decoded_at,now,src.frame_id,
                                        (src.image.shape[1],src.image.shape[0]),settings,image=src.image)
                     fresh_result=True
+                authority=self.control_provider() if self.control_provider else {}
+                heading,now=heading_snapshot(self.heading)
                 decision=controller.tick(now,w,h,frame.decoded_at if self.receiver.state=='STREAMING' else None,
-                                         settings,self.heading.get())
+                                         settings,heading,control_available=authority.get('active',False) and authority.get('mode')=='DANCE')
+                decision['control_status']=authority
                 if self.model_error:
                     decision.update(state='ERROR',reason='inference_failed',stale=True,track_box=None,
                                     intent={'yaw':0.,'vertical':0.,'roll':0.,'forward':0.})
@@ -237,3 +256,4 @@ class FollowSession:
                                      'processed_frames':self.receiver.processed_count,'sampled_out_frames':self.receiver.sampled_out,
                                      'log_dropped':self.log.dropped,'flight_commands_sent':self.flight_commands_sent})
         self.log.close()
+        if self.search_test_log:self.search_test_log.close();self.search_test_log=None

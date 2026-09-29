@@ -116,7 +116,7 @@ def yaw_override(decision,now,dance_started=None):
     if search.get('phase') not in (None,'BOOST'):return 0.
     if search.get('phase')=='BOOST':
         limit=search.get('boost_angle_degrees')
-        if not isinstance(limit,(int,float)) or not math.isfinite(limit) or not 0<limit<=90:return 0.
+        if not isinstance(limit,(int,float)) or not math.isfinite(limit) or not 0<limit<=180:return 0.
         start=search.get('started')
         if not isinstance(start,(int,float)) or not 0<=now-start<.35:return 0.
         margin=search.get('boost_brake_margin_degrees',0.)

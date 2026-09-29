@@ -216,18 +216,25 @@ class FollowLabWindow:
             exact.bind('<FocusOut>',lambda event,selected=axis:self.change_axis_speed(
                 selected,self.axis_entry_vars[selected].get()))
             ttk.Label(row,textvariable=self.axis_limit_labels[axis],width=7).pack(side='left',padx=(3,0))
-        ttk.Label(self.speed_bar,text='Normal caps for tracking / scan\nBrief edge catch-up: yaw 100%',foreground='#8cbbb8').pack(anchor='w',pady=3)
+        ttk.Label(self.speed_bar,text='Normal caps for tracking / keyboard\nSearch: yaw up to 100%, with braking',foreground='#8cbbb8').pack(anchor='w',pady=3)
         self.search_bar=ttk.LabelFrame(controls_page,text='Search after target loss',padding=8);self.search_bar.pack(fill='x',pady=8)
-        for label,key,lo,hi,step in (('Total scan angle (deg)','search_yaw_degrees',0,180,5),
+        for label,key,lo,hi,step in (('Search angle (deg)','search_yaw_degrees',0,180,5),
                                      ('Search time (s)','edge_search_seconds',2,10,.5)):
             row=ttk.Frame(self.search_bar);row.pack(fill='x',pady=3)
             ttk.Label(row,text=label).pack(side='left',padx=(0,8))
             ttk.Spinbox(row,textvariable=self.search_vars[key],from_=lo,to=hi,
                         increment=step,width=7).pack(side='right')
         ttk.Button(self.search_bar,text='Apply search',command=self.apply_search).pack(fill='x',pady=5)
-        ttk.Label(self.search_bar,text='Left / right scan around the loss heading.\nAuto time may extend the requested budget, up to 10 s.\n0 deg disables turning. Heading: TCP 9997.',
+        ttk.Label(self.search_bar,text='Side loss: full angle toward the target.\nCentre loss: half the angle on each side.\nAuto time: up to 10 s. 0 deg disables turning.',
                   foreground='#8cbbb8',wraplength=300).pack(anchor='w')
-        ttk.Label(controls_page,text='W/S: up/down   A/D: yaw\nArrows: forward/back/left/right\n20 deg = 10 deg each side.\nBrief edge catch-up uses 100% yaw; scanning uses the normal yaw cap.',wraplength=300).pack(anchor='w',pady=6)
+        self.search_test_scenario=tk.StringVar(value='CENTER')
+        ttk.Combobox(self.search_bar,textvariable=self.search_test_scenario,values=('LEFT','RIGHT','CENTER'),state='readonly',width=12).pack(fill='x',pady=3)
+        self.search_test_button=ttk.Button(self.search_bar,text='START SEARCH TEST',command=self.start_search_test)
+        self.search_test_button.pack(fill='x',pady=3)
+        ttk.Button(self.search_bar,text='STOP SEARCH TEST',command=self.stop_search_test).pack(fill='x',pady=3)
+        self.search_test_status=tk.StringVar(value='Yaw only, Dance OFF. Enable (E) first.\nUses applied search angle/time. No target required.')
+        ttk.Label(self.search_bar,textvariable=self.search_test_status,wraplength=300,foreground='#6ad5cb').pack(anchor='w',pady=3)
+        ttk.Label(controls_page,text='W/S: up/down   A/D: yaw\nArrows: forward/back/left/right\nMovement keys cancel a search test.\nQ / Esc releases control.',wraplength=300).pack(anchor='w',pady=6)
         self.state=tk.StringVar(value='DISCONNECTED')
         self.metrics=tk.StringVar(value='Model: '+self.model.get()+' | waiting')
         self.intent=tk.StringVar(value='Yaw +0.000   Up +0.000\nSide +0.000  Forward +0.000')
@@ -296,6 +303,7 @@ class FollowLabWindow:
             except OSError: socket.inet_pton(socket.AF_INET6,host)
             self.settings=self.read_settings(); self.save_config()
             self.session=FollowSession(self.base,host,self.codec.get(),self.settings,self.record.get(),self.compute.get(),self.device.get(),self.model.get(),self.recording_profile.get())
+            self.session.control_provider=self.control_snapshot
             self.session.start(); self.rates.clear(); self.mark_dirty()
             self.model_picker.configure(state='disabled');self.recording_picker.configure(state='disabled');self.compute_picker.configure(state='disabled'); self.device_picker.configure(state='disabled')
             self.connect_button.configure(state='disabled'); self.disconnect_button.configure(state='normal')
@@ -364,6 +372,27 @@ class FollowLabWindow:
     def log_control(self,event,data):
         session=getattr(self,'session',None)
         if session: session.record_control(event,data)
+
+    def control_snapshot(self):
+        control=self.manual
+        if control and self.session and control.host==self.session.receiver.host:
+            return control.control_snapshot()
+        return dict(active=False,mode='MANUAL',reason='Control disconnected')
+
+    def start_search_test(self):
+        try:
+            if not self.session or self.stopping or not self.manual or self.manual.host!=self.session.receiver.host:
+                raise ValueError('Connect video/telemetry and control to the same phone first')
+            self.clear_keyboard_input('search_test_start')
+            self.manual.start_search_test(self.session.get_settings(),self.session.heading.get,self.search_test_scenario.get())
+            self.dance_selected=False;self.session.restart_control()
+            self.notice.set('Search test running. Yaw only. Logs: '+str(self.session.output/('search_test_'+self.manual.search_test.run_id)))
+            self.canvas.focus_set()
+        except (ValueError,RuntimeError,OSError) as exc:self.notice.set(str(exc))
+
+    def stop_search_test(self):
+        if self.manual:self.manual.stop_search_test()
+        self.canvas.focus_set()
 
     def toggle_dance(self):
         self.dance_rejection=''
@@ -578,8 +607,9 @@ class FollowLabWindow:
             try:self.save_config()
             except Exception:self.settings=previous;raise
             if self.session:self.session.configure_search(angle,seconds,self.edge_search_on.get(),self.search_auto.get())
+            if getattr(self,'manual',None) and (angle<=0 or not self.edge_search_on.get()):self.manual.stop_search_test()
             self.mark_dirty()
-            self.notice.set('Scan saved; target retained. Total angle is split equally left/right. New limits apply to the next loss; 0 deg stops recovery.')
+            self.notice.set('Search saved: full angle for side loss, half each side for centre loss. New limits apply next search; 0 deg stops recovery.')
             self.canvas.focus_set()
         except Exception as exc:messagebox.showerror('Search settings',str(exc))
 
@@ -628,9 +658,16 @@ class FollowLabWindow:
             self.manual.update(self.pressed & MOVEMENT_KEYS,decision)
             self.manual_status.set(self.manual.status)
             self.manual_button.configure(text='Disconnect keyboard' if self.manual.thread.is_alive() else 'Connect keyboard')
+            snapshot=self.manual.control_snapshot();test=snapshot.get('search_test')
+            if test:
+                self.search_test_status.set(f"{'DONE' if test.get('finished') else 'SETTLING' if test.get('tail') else 'RUNNING'} | {test.get('reason','starting')}\n"
+                    f"Measured {test.get('measured_offset_degrees',0):+.1f} deg | target {test.get('target_offset_degrees',0):+.1f} deg\n"
+                    f"Range {test.get('scan_min_degrees',0):+.0f} to {test.get('scan_max_degrees',0):+.0f} deg\n"
+                    f"Log: search_test_{test.get('run_id','')}")
         s=self.session
         if s and not self.stopping:
             now=time.monotonic(); frame=s.receiver.frames.get(); analysis=s.analysis.get(); decision=s.decision.get()
+            decision=s.with_control_status(decision)
             self.rates.append((now,s.receiver.count,s.inference_count,s.receiver.processed_count))
             elapsed=max(.01,now-self.rates[0][0]); source_fps=(s.receiver.count-self.rates[0][1])/elapsed
             video_fps=(s.receiver.processed_count-self.rates[0][3])/elapsed
@@ -644,7 +681,7 @@ class FollowLabWindow:
                 search=decision.get('edge_search') or {}
                 search_text=(f"Recovery: {search.get('phase','--')} | "
                              f"offset {search.get('scan_offset_degrees',0):+.1f} deg\n"
-                             f"Total scan {search.get('angle_degrees',self.settings.search_yaw_degrees):g} deg | {search.get('duration_seconds',self.settings.edge_search_seconds):g} s\n"
+                             f"{search.get('span_mode','centered')} {search.get('scan_min_degrees',0):+.0f} to {search.get('scan_max_degrees',0):+.0f} deg | {search.get('duration_seconds',self.settings.edge_search_seconds):g} s\n"
                              f"Requested {search.get('requested_duration_seconds',self.settings.edge_search_seconds):g} s | both sides reached: {search.get('coverage_complete',False)}\n"
                              f"First search: { {-1:'LEFT',1:'RIGHT'}.get(search.get('first_scan_direction'),'--')}\n"
                              f"{search.get('reason','--')}\n{s.heading.status}")

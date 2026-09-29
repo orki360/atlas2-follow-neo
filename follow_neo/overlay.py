@@ -104,8 +104,27 @@ def render_bundle(frame,analysis,decision,mode,stale_seconds=.75,now=None,output
     cv2.rectangle(image,(0,0),(w,38),(24,31,40),-1)
     cv2.putText(image,title,(12,26),cv2.FONT_HERSHEY_SIMPLEX,.62,(240,240,240),1)
     if bound:
-        status=f"{bound.get('state','--')} | spacing {bound.get('spacing_phase','--')} | VISION STATUS - control in GUI/log"
+        authority=(decision or {}).get('control_status') or bound.get('control_status') or {}
+        ack=authority.get('acknowledged') or {}
+        active=authority.get('active') and 0<=time.monotonic()-authority.get('time',0)<=.35
+        # Recorded rendering may happen later; the snapshot belongs to capture,
+        # so use its own time when the caller supplies a frame timestamp.
+        if authority.get('time') is not None:
+            active=authority.get('active') and abs(authority['time']-chosen.decoded_at)<=.35
+        recent_ack=active and 0<=authority.get('time',0)-ack.get('time',0)<=.35
+        if not active:execution='CONTROL OFF - SEARCH NOT EXECUTING'
+        elif authority.get('motion_hold'):execution='CONTROL ON - MOVEMENT PAUSED'
+        elif authority.get('mode')=='MANUAL' or authority.get('keyboard_override'):execution='MANUAL CONTROL - SEARCH NOT EXECUTING'
+        elif not recent_ack:execution='CONTROL ON - AWAITING ACK'
+        else:execution=f"{ack.get('mode','--')} RC ACK yaw {ack.get('values',[0])[0]:+.3f}"
+        status=f"{bound.get('state','--')} | {execution}"
+        metadata['control_status']=authority
         cv2.putText(image,status,(12,h-18),cv2.FONT_HERSHEY_SIMPLEX,.6,(240,240,240),1)
+        test=authority.get('search_test')
+        if test and not test.get('finished'):
+            line=(f"SEARCH TEST | measured {test.get('measured_offset_degrees',0):+.1f} deg | "
+                  f"target {test.get('target_offset_degrees',0):+.1f} deg | {test.get('reason','starting')}")
+            cv2.putText(image,line,(12,h-44),cv2.FONT_HERSHEY_SIMPLEX,.6,(80,220,220),1)
     if now-chosen.decoded_at>stale_seconds:
         cv2.rectangle(image,(0,max(0,h-48)),(w,h),(25,25,150),-1)
         cv2.putText(image,'STALE VIDEO / RESULT',(12,h-17),cv2.FONT_HERSHEY_SIMPLEX,.6,(255,255,255),2)

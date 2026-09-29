@@ -75,7 +75,7 @@ class FollowController:
                 strong=bool(accepted and t.accepted.confidence>=max(settings.confidence,settings.new_track_confidence)))
         return accepted
 
-    def tick(self,now,width,height,video_time,settings,heading=None):
+    def tick(self,now,width,height,video_time,settings,heading=None,control_available=True):
         if self.frame_size is not None and self.frame_size!=(width,height):self.reset()
         t=self.tracker;k=t.snapshot(now);quality=t.quality();uncertainty=t.uncertainty(now)
         mtime=t.measurement_time
@@ -96,6 +96,7 @@ class FollowController:
         forecast_ok=std is not None and std[0]<width*.12 and std[1]<height*.12
         pending=bool(getattr(t,'candidate_pending',False) and self.result_time is not None and now-self.result_time<=.15)
         search_kwargs=dict(candidate_pending=pending,
+                           control_available=control_available,
                            bridge_reliable=forecast_ok and quality['stable'] and age<=COAST_SECONDS) if self.tracker_backend=='botsort' else {}
         search=self.edge_search.update(now,self.rejected if self.tracker_backend=='botsort' else self.missing_detection,stale,
                     self.spacing.phase,self.spacing.close,settings,heading,**search_kwargs)

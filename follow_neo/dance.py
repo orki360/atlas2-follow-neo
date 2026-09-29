@@ -15,6 +15,8 @@ def dance_command(decision,now,started):
     stamp=decision.get('prediction_time')
     if not isinstance(stamp,(int,float)) or not math.isfinite(stamp):return ZERO,'Invalid decision time'
     if stamp<=started or not 0<=now-stamp<=.20:return ZERO,'Waiting for a fresh decision'
+    if decision.get('state')=='SEARCH_PAUSED':
+        return ZERO,'Search paused / '+str(decision.get('reason','verifying'))
     if decision.get('tracking',{}).get('acquisition_state') in ('verifying','reacquiring','waiting'):
         return ZERO,'Hover / '+target_status_text(decision)
     measurement_time=decision.get('measurement_time')
@@ -31,7 +33,7 @@ def dance_command(decision,now,started):
     search=decision.get('edge_search') or {}
     if state=='DIRECTIONAL_SEARCH' and search.get('phase')=='SCAN':
         turn=scan_command(decision,now,started)
-        return (turn,0.,0.,0.),'Scan / '+('RIGHT' if turn>0 else 'LEFT' if turn<0 else 'PAUSED')+' / normal yaw limit'
+        return (turn,0.,0.,0.),'Scan / '+('RIGHT' if turn>0 else 'LEFT' if turn<0 else 'PAUSED')+(' / yaw up to 100%, braking' if search.get('yaw_full_scale') else ' / normal yaw limit')
     if state=='DIRECTIONAL_SEARCH':return ZERO,'Search held: heading, angle or time contract expired'
     if state in ('HOVER_WAIT','WAIT_TARGET','SEARCH'):
         return ZERO,'Hover / '+str(decision.get('reason','waiting_target'))

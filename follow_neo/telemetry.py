@@ -36,6 +36,12 @@ def fresh_heading(sample,now):
             and -180<=sample['yaw_deg']<=180 and 0<=now-sample['time']<=HEADING_MAX_AGE)
 
 
+def heading_snapshot(receiver,clock=time.monotonic):
+    """Read the sample BEFORE its comparison time, even during concurrent updates."""
+    sample=receiver.get()
+    return sample,clock()
+
+
 class HeadingReceiver:
     def __init__(self,host,on_event=None,connector=socket.create_connection):
         self.host=host;self.connector=connector;self.on_event=on_event or (lambda *args:None)

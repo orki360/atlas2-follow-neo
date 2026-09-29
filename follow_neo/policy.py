@@ -100,6 +100,8 @@ class DeterministicTrackingPolicy:
             if state=='TRACK':self.last=command.bounded()
         elif search and search.get('verifying'):
             state,reason='REACQUIRE','search_reacquire_verifying';self.hits=0
+        elif search and search.get('paused'):
+            state,reason='SEARCH_PAUSED',search['reason'];self.hits=0
         elif search and search.get('active'):
             state,reason='DIRECTIONAL_SEARCH','directional_search';self.hits=0
         elif search and search.get('consumed'):

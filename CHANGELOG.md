@@ -2,6 +2,37 @@
 
 ## Version 11.1 — Shared version source and visible GUI label — 2026-09-28
 
+### Search debugging revision 5 — 2026-09-29
+
+- Fix the heading timestamp race found in session `20260929_121324_fa7092`:
+  read the heading snapshot before taking the decision time, after tracker work.
+  Keep future/stale telemetry checks; briefly pause on missing heading, then
+  cancel after 350 ms if telemetry does not recover. Never move while paused.
+- Keep candidate verification inside the existing search episode and deadline,
+  display `SEARCH_PAUSED`, and immediately rearm loss recovery after confirmed
+  reacquisition so an old completion flag cannot override a short detection gap.
+- Use the full configured angle toward the estimated loss direction for targets
+  last measured outside the central half of the image. For central losses use
+  half the angle on either side. Preserve the loss heading anchor across BOOST
+  and SCAN; directional scans return to the anchor without crossing to the other
+  side. Auto budgets account for the selected route and remain capped at 10 s.
+- Allow production search yaw up to 100%, independently of normal axis sliders,
+  with heading-rate braking near boundaries. Translation stays zero. Keyboard
+  overrides immediately return to the normal axis caps.
+- Add START / STOP SEARCH TEST and LEFT / RIGHT / CENTER scenarios in Control /
+  Search. The test uses the production planner and command validation, requires
+  explicit existing control authority and fresh telemetry, disables Dance and
+  completes one measured sweep or stops at the time limit. No target is needed.
+- Write dedicated `logs/<session>/search_test_<id>/events.jsonl` files with
+  measured heading, relative angle, angular rate, requested/sent commands, ACKs,
+  stop reasons and a summary. Measure two seconds of post-stop drift when the
+  connection remains available; mark interrupted tails and telemetry gaps.
+- Cancel active recovery when control is lost and reset control history on
+  enable/release/error without resetting target identity. Show control authority
+  and recent acknowledged yaw in prediction recordings, plus search-test angles.
+- Display version 11.1 / `search-debug-5`. MSDKRemote, protocol, models and saved
+  user settings are unchanged. See `SEARCH_DEBUG_VALIDATION.md` for validation.
+
 ### Search direction revision 4 — 2026-09-29
 
 - Choose the first scan side from consistent measured target motion before loss,

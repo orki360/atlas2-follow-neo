@@ -41,19 +41,20 @@ class DirectionTests(unittest.TestCase):
                 d=self.begin(side,edge=True);deadline=d['until']
                 self.assertEqual(d['phase'],'BOOST')
                 d=self.step(self.start+.36,side*3)
-                self.assertEqual(d['phase'],'SCAN');self.assertEqual(d['scan_target_degrees'],side*45)
+                self.assertEqual(d['phase'],'SCAN');self.assertEqual(d['scan_target_degrees'],side*90)
                 d=self.step(self.start+.55,side*3)
                 values,_=dance_command(self.decision(d,self.start+.55),self.start+.55,9.)
-                self.assertGreater(values[0]*side,0);self.assertLessEqual(abs(values[0]),.25)
+                self.assertGreater(values[0]*side,0);self.assertLessEqual(abs(values[0]),1.)
                 self.assertEqual(values[1:],(0.,0.,0.));self.assertEqual(d['until'],deadline)
     def test_already_reached_boundary_reverses_without_recentering_range(self):
         for side in (-1,1):
             self.begin(side,edge=True)
-            d=self.step(self.start+.1,side*46)
-            self.assertEqual(d['scan_target_degrees'],-side*45)
+            self.step(self.start+.1,side*45)
+            d=self.step(self.start+.2,side*90)
+            self.assertEqual(d['scan_target_degrees'],0.)
             self.assertEqual(d['first_scan_direction'],side)
             self.assertIn(side,d['boundaries_reached'])
-            d=self.step(self.start+.3,side*46)
+            d=self.step(self.start+.4,side*90)
             self.assertLess(side*d['scan_yaw'],0)
     def test_stationary_side_is_fallback_when_motion_is_not_reliable(self):
         for side in (-1,1):
@@ -70,13 +71,14 @@ class DirectionTests(unittest.TestCase):
     def test_approach_rate_brakes_boost_before_reaching_boundary(self):
         self.begin(-1,edge=True)
         self.step(self.start+.1,-8)
-        d=self.step(self.start+.2,-24)
+        self.r.rate.update=Mock(return_value=-50.)
+        d=self.step(self.start+.2,-70)
         self.assertEqual(d['phase'],'SCAN');self.assertEqual(d['boost_exit_reason'],'boundary_braking')
-        self.assertGreater(d['scan_offset_degrees'],-45)
-        self.assertEqual(d['scan_target_degrees'],-45)
+        self.assertGreater(d['scan_offset_degrees'],-90)
+        self.assertEqual(d['scan_target_degrees'],-90)
         self.assertEqual(yaw_override(self.decision(d,self.start+.2),self.start+.2,9),0)
     def test_send_gate_holds_boost_within_braking_margin(self):
-        d=self.begin(1,edge=True);d.update(angle_progress_degrees=43,boost_brake_margin_degrees=3)
+        d=self.begin(1,edge=True);d.update(angle_progress_degrees=88,boost_brake_margin_degrees=3)
         self.assertEqual(yaw_override(self.decision(d,self.start),self.start,9),0)
     def test_recorded_left_loss_skips_boost_when_already_turning_toward_boundary(self):
         r=RecoverySearch();s=Settings(search_yaw_degrees=90,edge_search_seconds=2)
@@ -100,7 +102,9 @@ class DirectionTests(unittest.TestCase):
     def test_missing_heading_stops_directional_scan(self):
         self.begin(1)
         d=self.r.update(self.start+.2,True,False,'APPROACH',False,self.s,None)
-        self.assertFalse(d['active']);self.assertEqual(d['reason'],'heading_unavailable')
+        self.assertFalse(d['active']);self.assertEqual(d['reason'],'waiting_heading')
+        d=self.r.update(self.start+.6,True,False,'APPROACH',False,self.s,None)
+        self.assertEqual(d['reason'],'heading_unavailable')
     def test_retained_edge_direction_cannot_override_new_motion_estimate(self):
         r=RecoverySearch();s=Settings()
         r.source_time=10.;r.eligible=True;r.box_edge=True
