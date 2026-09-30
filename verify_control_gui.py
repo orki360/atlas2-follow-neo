@@ -14,9 +14,11 @@ with tempfile.TemporaryDirectory() as folder:
     try:
         window=FollowLabWindow(root,Path(folder))
         root.update_idletasks()
-        assert VERSION=='11.1'
-        assert window.version_label.cget('text')=='v11.1'
-        assert window.revision_label.cget('text')=='control-auto-resume-7'
+        assert VERSION=='12.0.0'
+        assert window.version_label.cget('text')=='v12.0.0'
+        assert window.revision_label.cget('text')=='live-state-diagram-8'
+        assert window.tabs.tab(window.diagram_tab,'text')=='Live states'
+        assert window.tabs.select()==str(window.diagram_tab)
         assert window.search_auto.get() is True
         assert window.session is None and window.manual is None
         assert callable(window.key_state_reader)
@@ -35,6 +37,17 @@ with tempfile.TemporaryDirectory() as folder:
         assert 'Loss grace (seconds)' in texts
         assert 'Auto scan time for angle (max 10 s)' in texts
         assert float(window.vars['search_grace_seconds'].get())==.45
-        print('PASS: actual Tk GUI initializes; version 11.1 / control-auto-resume-7, search buttons and scenario; offline start refused; no connections.')
+        panel=window.state_diagram
+        before=len(panel.canvas.find_all())
+        for i,state in enumerate(('TRACK','DIRECTIONAL_SEARCH','SEARCH_PAUSED','REACQUIRE','HOVER_WAIT','WAIT_VIDEO','ERROR')):
+            stamp=10.+i
+            d=dict(state=state,prediction_time=stamp,reason='offline_test',spacing_phase='APPROACH',
+                   edge_search=dict(phase='BOOST' if i==1 else 'SCAN',paused=i==2))
+            control=dict(connected=True,active=True,mode='DANCE',time=stamp,paused=i==2)
+            panel.update_state(d,control,True,True,stamp)
+            assert panel.last_view['state']==state
+            assert panel.canvas.itemcget(panel.boxes[state],'fill')!= '#243746'
+        assert len(panel.canvas.find_all())==before
+        print('PASS: actual Tk GUI initializes; version 12.0.0 / live-state-diagram-8; all state highlights update without recreating canvas items; offline start refused; no connections.')
     finally:
         root.destroy()

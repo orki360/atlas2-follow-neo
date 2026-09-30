@@ -1,6 +1,31 @@
 # CHANGELOG — Dancing Drones / Follow NEO
 
+## Version 12.0.0 — Live state diagram and automatic control recovery — 2026-09-30
+
+- Release the current application as version 12.0.0, using VERSION.py as the
+  shared source for the GUI title, visible version label and application metadata.
+- Include the Live states diagram with separate Dance, search-planner and
+  control-status indications, plus measured search yaw and target yaw.
+- Include connection-preserving command pauses and automatic recovery after
+  valid pending/neutral acknowledgements and GUI recovery, without another E press.
+- Retain the current tracking/search behavior, including the existing BOOST and
+  search timing rules. The proposed angle-driven changes are not part of this release.
+- Preserve MSDKRemote compatibility and saved user settings.
+
 ## Version 11.1 — Shared version source and visible GUI label — 2026-09-28
+
+### Live state diagram revision 8 — 2026-09-30
+
+- Add a default Live states tab beside the video, highlighting the live Dance
+  policy and the separate IDLE / BOOST / SCAN / DONE search-planner phase.
+- Display control availability, paused/preview states, transition history,
+  state reason, spacing phase, measured search yaw, target yaw and recent RC ACK.
+  Use current controller decisions independently of the selected video frame.
+- Clear stale/disconnected highlights and distinguish search tests from Dance.
+  Preserve control authority when focusing the diagram; clear held movement keys.
+- Create diagram canvas items once and refresh at no more than 10 Hz. The view
+  does not send commands, change tracking/search transitions or write flight logs.
+- Display version 11.1 / `live-state-diagram-8`. MSDKRemote is unchanged.
 
 ### Automatic control recovery revision 7 — 2026-09-30
 

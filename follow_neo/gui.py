@@ -21,6 +21,7 @@ from .overlay import render_bundle
 from .models import DEFAULT_MODEL, LEGACY_MODEL
 from .manual import ManualControl, MOVEMENT_KEYS, AXES, DEFAULT_AXIS_LIMITS
 from .control_status import control_indicator, acknowledged_command_text, target_status_text
+from .state_diagram import LiveStateDiagram
 
 
 # Windows keeps these virtual-key codes stable even when the active keyboard
@@ -175,7 +176,11 @@ class FollowLabWindow:
         ttk.Label(left,textvariable=self.video_stats,wraplength=950,padding=8).pack(fill='x')
 
         sidebar=ttk.Frame(body); sidebar.grid(row=0,column=1,sticky='nsew')
-        self.tabs=ttk.Notebook(sidebar,width=355);self.tabs.pack(fill='both',expand=True)
+        self.tabs=ttk.Notebook(sidebar,width=410);self.tabs.pack(fill='both',expand=True)
+        self.diagram_tab=ttk.Frame(self.tabs,padding=5)
+        self.tabs.add(self.diagram_tab,text='Live states')
+        self.state_diagram=LiveStateDiagram(self.diagram_tab)
+        self.state_diagram.pack(fill='both',expand=True)
         def page(title):
             tab=ttk.Frame(self.tabs);self.tabs.add(tab,text=title)
             canvas=tk.Canvas(tab,width=345,bg='#17232d',highlightthickness=0)
@@ -577,13 +582,14 @@ class FollowLabWindow:
             viewbar=getattr(self,'view_bar',None)
             searchbar=getattr(self,'search_bar',None)
             controls=getattr(self,'controls_tab',None)
+            diagram=getattr(self,'diagram_tab',None)
             notebook=getattr(self,'tabs',None)
             def inside(widget,ancestor):
                 while widget is not None:
                     if widget is ancestor: return True
                     widget=getattr(widget,'master',None)
                 return False
-            if focused is not None and (inside(focused,toolbar) or inside(focused,speedbar) or inside(focused,viewbar) or inside(focused,searchbar) or inside(focused,controls) or focused is notebook):
+            if focused is not None and (inside(focused,toolbar) or inside(focused,speedbar) or inside(focused,viewbar) or inside(focused,searchbar) or inside(focused,controls) or inside(focused,diagram) or focused is notebook):
                 self.pressed.clear()
                 if self.manual: self.manual.update(set())
                 return
@@ -652,6 +658,7 @@ class FollowLabWindow:
         return None
 
     def refresh(self):
+        diagram_decision=None
         self.reconcile_keyboard()
         if self.manual and not self.manual.thread.is_alive() and self.pressed:
             self.clear_keyboard_input('control_connection_lost')
@@ -671,6 +678,7 @@ class FollowLabWindow:
         if s and not self.stopping:
             now=time.monotonic(); frame=s.receiver.frames.get(); analysis=s.analysis.get(); decision=s.decision.get()
             decision=s.with_control_status(decision)
+            diagram_decision=decision
             self.rates.append((now,s.receiver.count,s.inference_count,s.receiver.processed_count))
             elapsed=max(.01,now-self.rates[0][0]); source_fps=(s.receiver.count-self.rates[0][1])/elapsed
             video_fps=(s.receiver.processed_count-self.rates[0][3])/elapsed
@@ -725,6 +733,11 @@ class FollowLabWindow:
             size='--' if frame is None else f'{frame.image.shape[1]}x{frame.image.shape[0]}'
             self.video_stats.set(f'{size} | Input {source_fps:.1f} FPS | Processed video {video_fps:.1f} FPS | YOLO {inference_fps:.1f} FPS | Decode age {decode_age} | Unanalyzed selected frames {s.inference_skips}')
         self.show_control_indicator()
+        diagram=getattr(self,'state_diagram',None)
+        if diagram is not None:
+            diagram.update_state(diagram_decision,self.control_snapshot(),self.dance_selected,
+                bool(s and not self.stopping),time.monotonic(),
+                error=s.model_error if s and not self.stopping else None)
         recorder=s.recorder if s else None
         recording=recorder.status() if recorder else None
         if recording:

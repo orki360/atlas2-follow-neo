@@ -57,5 +57,11 @@ class FocusTransitionTests(unittest.TestCase):
         self.assertTrue(self.window.manual.wanted)
         self.assertTrue(self.window.manual.communication_paused)
 
+    def test_live_diagram_focus_preserves_dance_authority(self):
+        w=self.window;w.diagram_tab=object();w.manual.start_dance()
+        self.focus(Mock(master=w.diagram_tab))
+        self.assertTrue(w.manual.wanted);self.assertFalse(w.manual.communication_paused)
+        self.assertEqual(w.manual.mode,'DANCE');self.assertFalse(w.manual.keys)
+
 
 if __name__=='__main__': unittest.main()
