@@ -80,39 +80,22 @@ class ManualTests(unittest.TestCase):
         self.assertEqual(server.commands[i-1], 'rc 0 0 0 0')
         self.assertEqual(server.commands.count('takeoff'), 1)
 
-    def test_missing_ui_heartbeat_releases(self):
-        received = threading.Event()
-        allow_reply = threading.Event()
-        completed = threading.Event()
-        def before_reply(command):
-            if command == 'disable':
-                received.set()
-                allow_reply.wait(2)
-        def on_event(event, data):
-            if event == 'control_released':
-                completed.set()
-        server, control = self.start_control(before_reply=before_reply, on_event=on_event)
-        try:
-            control.update({'up'}); control.enable()
-            wait_for(lambda: control.enabled)
-            self.assertTrue(received.wait(3), 'Missing heartbeat did not send disable')
-            # Receipt by the server precedes acknowledgement and the local
-            # enabled=False update. Hold the reply to exercise this ordering
-            # deterministically, including on Windows.
-            self.assertFalse(completed.is_set())
-            self.assertFalse(control.wanted)
-            self.assertEqual(control.keys, set())
-            self.assertEqual(server.commands[-2:], ['rc 0 0 0 0', 'disable'])
-            allow_reply.set()
-            self.assertTrue(completed.wait(3), 'Acknowledged release did not complete')
-            self.assertFalse(control.enabled)
-        finally:
-            allow_reply.set()
+    def test_missing_ui_heartbeat_pauses_connection(self):
+        server, control = self.start_control()
+        control.update({'up'}); control.enable()
+        wait_for(lambda: control.enabled)
+        wait_for(lambda: control.communication_paused)
+        self.assertTrue(control.wanted)
+        self.assertTrue(control.thread.is_alive())
+        self.assertEqual(control.keys, set())
+        self.assertNotIn('disable',server.commands)
+        self.assertEqual(server.commands[-1],'rc 0 0 0 0')
 
     def test_enable_failure_never_moves(self):
         server, control = self.start_control('enable')
         control.update({'up'}); control.enable()
-        wait_for(lambda: not control.thread.is_alive())
+        wait_for(lambda: control.communication_paused)
+        self.assertTrue(control.thread.is_alive())
         self.assertIn('denied', control.status)
         self.assertFalse(control.enabled)
         self.assertFalse(any('.0150' in cmd for cmd in server.commands))
@@ -181,12 +164,13 @@ class KeyboardTests(unittest.TestCase):
             callback()
         self.window.manual.update.assert_called_with(set())
 
-    def test_focus_leaving_canvas_releases(self):
+    def test_focus_leaving_canvas_pauses(self):
         self.window.pressed.add('w')
         self.window.root.focus_get.return_value = None
         self.window.focus_out(Mock())
         self.window.root.after_idle.call_args.args[0]()
-        self.window.manual.release.assert_called_once()
+        self.window.manual.release.assert_not_called()
+        self.window.manual.pause_control.assert_called_once()
         self.assertEqual(self.window.pressed, set())
 
     def test_focus_entering_canvas_preserves_enable(self):

@@ -45,15 +45,17 @@ class FocusTransitionTests(unittest.TestCase):
         self.assertEqual(w.manual.mode,'MANUAL')
         self.assertTrue(w.manual.wanted)
 
-    def test_other_window_releases_control(self):
+    def test_other_window_pauses_control(self):
         self.window.manual.start_dance()
         self.focus(None)
-        self.assertFalse(self.window.manual.wanted)
+        self.assertTrue(self.window.manual.wanted)
+        self.assertTrue(self.window.manual.communication_paused)
         self.assertEqual(self.window.manual.mode,'DANCE')
 
-    def test_settings_field_releases_control(self):
+    def test_settings_field_pauses_control(self):
         self.focus(Mock(master=object()))
-        self.assertFalse(self.window.manual.wanted)
+        self.assertTrue(self.window.manual.wanted)
+        self.assertTrue(self.window.manual.communication_paused)
 
 
 if __name__=='__main__': unittest.main()

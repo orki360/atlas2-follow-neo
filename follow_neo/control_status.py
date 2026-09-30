@@ -14,6 +14,8 @@ def target_status_text(decision):
 
 
 def acknowledged_command_text(control,now):
+    if control is not None and getattr(control,'communication_paused',False)==True:
+        return 'RC: movement paused | '+control.status
     if control is None or not control.enabled or not control.wanted:
         return 'RC: no active control authority'
     ack=getattr(control,'last_acknowledged',None)
@@ -34,6 +36,8 @@ def control_indicator(control, rejection='', selected=None):
     if not control.thread.is_alive() or control.stop_event.is_set():
         if dance: return 'DANCE ON - CONTROL OFF', control.status, '#922c36'
         return 'CONTROL OFF', control.status, '#922c36' if 'ERROR' in control.status else '#354452'
+    if getattr(control,'communication_paused',False)==True:
+        return 'CONTROL CONNECTED - MOVEMENT PAUSED', control.status, '#76550d'
     if not control.wanted:
         if dance: return 'DANCE ON - CONTROL RELEASED', 'Selection kept | Enable (E) to resume movement', '#76550d'
         return 'CONTROL RELEASED', 'Dance is OFF | Enable (E) to control', '#354452'

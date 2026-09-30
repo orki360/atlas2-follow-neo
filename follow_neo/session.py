@@ -88,7 +88,7 @@ class FollowSession:
         if event=='flight_command' and data.get('server_acknowledged'):
             self.flight_commands_sent+=1
         self.log.write(event,data)
-        if event in ('control_error','control_released','control_enabled'):
+        if event in ('control_error','control_released','control_enabled','control_movement_paused','control_movement_resumed'):
             self.restart_control()
         if event=='search_test_started':
             if self.search_test_log:self.search_test_log.close()

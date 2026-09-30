@@ -9,7 +9,7 @@ sys.path.insert(0, str(ROOT/'tests'))
 from run_update9_tests import SUITES, METHODS
 
 if __name__ == '__main__':
-    names = ['test_search_debug', 'test_search_direction', 'test_single_target', 'test_stabilization', 'test_continuity', 'test_control_scan_fix', 'test_update12', 'test_update10'] + SUITES + [
+    names = ['test_control_pause', 'test_search_debug', 'test_search_direction', 'test_single_target', 'test_stabilization', 'test_continuity', 'test_control_scan_fix', 'test_update12', 'test_update10'] + SUITES + [
         f'{cls}.{method}' for cls, methods in METHODS.items() for method in methods]
     result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromNames(names))
     raise SystemExit(0 if result.wasSuccessful() else 1)

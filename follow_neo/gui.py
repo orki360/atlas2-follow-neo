@@ -467,6 +467,7 @@ class FollowLabWindow:
     def show_control_indicator(self):
         title,detail,color=control_indicator(self.manual,self.dance_rejection,self.dance_selected)
         if (self.dance_selected and self.manual and self.manual.wanted and self.manual.enabled
+                and getattr(self.manual,'communication_paused',False)!=True
                 and (not self.session or self.manual.host!=self.session.receiver.host)):
             title,detail,color='DANCE ON - WAITING FOR VIDEO','Connect video to the same phone as control','#76550d'
         self.control_banner.configure(text=title,bg=color)
@@ -522,8 +523,9 @@ class FollowLabWindow:
         if not held or reader is None:return
         try:actual=reader(held)
         except (OSError,AttributeError):
-            self.release_manual()
-            self.notice.set('Keyboard state unavailable. Control released; Enable (E) to resume.')
+            self.clear_keyboard_input('keyboard_state_unavailable')
+            if self.manual:self.manual.pause_control('Keyboard state unavailable')
+            self.notice.set('Keyboard state unavailable. Connection kept; movement paused.')
             return
         released=held-actual
         if released:
@@ -586,8 +588,9 @@ class FollowLabWindow:
                 if self.manual: self.manual.update(set())
                 return
             if self.manual and self.manual.wanted:
-                self.log_control('control_focus_release',{'reason':'window_or_settings_focus'})
-            self.release_manual()
+                self.log_control('control_focus_pause',{'reason':'window_or_settings_focus'})
+                self.manual.pause_control('Window or settings focus lost')
+            self.clear_keyboard_input('focus_lost')
         if getattr(self,'closing',False): return
         pending=getattr(self,'focus_check_id',None)
         if pending:

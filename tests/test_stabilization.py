@@ -173,9 +173,10 @@ class NeutralizationTests(unittest.TestCase):
             self.assertEqual(server.recv(100),b'rc 0 0 0 0\r\n');server.sendall(b'success\r\n')
         peer=threading.Thread(target=reply);peer.start()
         self.assertTrue(channel.command('rc 0 0 0 0'));peer.join(1)
-    def test_missing_neutral_ack_still_times_out(self):
+    def test_missing_neutral_ack_pauses_without_closing(self):
         channel,server,result,events=self.exchange(False)
-        self.assertIsInstance(result[0],TimeoutError)
+        self.assertEqual(result,[False]);self.assertTrue(channel.paused)
+        self.assertTrue(channel.pending);self.assertGreaterEqual(channel.sock.fileno(),0)
         self.assertFalse(any(e=='control_motion_neutralized' for e,d in events))
     def test_ack_display_distinguishes_authority_and_stale_ack(self):
         control=SimpleNamespace(enabled=True,wanted=True,last_acknowledged=dict(time=10,mode='DANCE',values=[.1,0,0,.2]))

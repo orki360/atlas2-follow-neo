@@ -51,30 +51,33 @@ class TransportTests(unittest.TestCase):
         wait_for(lambda:self.control.enabled)
         self.control.update({'down'})
         self.assertTrue(self.peer.motion.wait(1))
-    def test_release_sends_zero_immediately_and_disables_at_original_ack_deadline(self):
+    def test_release_sends_zero_immediately_and_pauses_at_original_ack_deadline(self):
         self.start();released=time.monotonic();self.control.update(set())
-        self.assertTrue(self.peer.zero.wait(.20));self.assertTrue(self.peer.disabled.wait(.30))
-        self.control.thread.join(1)
-        self.assertFalse(self.control.enabled);self.assertFalse(self.control.wanted)
-        self.assertLess(time.monotonic()-released,.4)
-        self.assertIn('STOP UNCONFIRMED',self.control.status)
-        self.assertTrue(any(e=='control_stop_unconfirmed' and not d['server_acknowledged'] for e,d in self.events))
+        self.assertTrue(self.peer.zero.wait(.20));wait_for(lambda:self.control.communication_paused)
+        self.assertFalse(self.peer.disabled.is_set());self.assertTrue(self.control.thread.is_alive())
+        self.assertTrue(self.control.wanted)
+        self.assertLess(time.monotonic()-released,.5)
+        self.assertIn('MOVEMENT PAUSED',self.control.status)
+        self.assertFalse(any(e=='control_motion_neutralized' for e,d in self.events))
         self.assertFalse(any(e=='flight_command' and any(d.get('values',[])) for e,d in self.events))
     def test_reverse_during_delayed_reply_stops_instead_of_latching_opposite(self):
         self.start();self.control.update({'up'})
-        self.assertTrue(self.peer.disabled.wait(.3));self.control.thread.join(1)
+        wait_for(lambda:self.control.communication_paused)
+        self.assertFalse(self.peer.disabled.is_set());self.assertTrue(self.control.thread.is_alive())
         self.assertFalse(any(c.startswith('rc ') and float(c.split()[-1])>0 for _,c in self.peer.commands))
     def test_missing_ack_times_out_even_with_healthy_ui_heartbeat(self):
         self.start();deadline=time.monotonic()+.5
         while self.control.thread.is_alive() and time.monotonic()<deadline:
             self.control.update({'down'});time.sleep(.01)
-        self.assertTrue(self.peer.disabled.wait(.15));self.assertFalse(self.control.enabled)
+        self.assertTrue(self.control.communication_paused)
+        self.assertFalse(self.peer.disabled.is_set());self.assertTrue(self.control.thread.is_alive())
     def test_success_from_interrupted_exchange_is_not_claimed_as_stop_confirmation(self):
         client,server=socket.socketpair();events=[]
         self.addCleanup(client.close);self.addCleanup(server.close)
         channel=ControlChannel(client,lambda keys:None,lambda e,d:events.append((e,d)))
         server.sendall(b'success\r\n')
-        channel.pending=True;channel.stop_unconfirmed('test late acknowledgement')
+        channel.outstanding.append((1,'rc 0 0 0 .1',time.monotonic(),False))
+        channel.stop_unconfirmed('test late acknowledgement')
         self.assertFalse(events[-1][1]['server_acknowledged'])
         self.assertEqual(server.recv(100),b'rc 0 0 0 0\r\ndisable\r\n')
 
@@ -100,6 +103,12 @@ class KeyboardRecoveryTests(unittest.TestCase):
         self.w.key_state_reader=lambda keys:set()
         self.w.reconcile_keyboard()
         self.assertFalse(self.w.pressed);self.w.manual.update.assert_called_with(set())
+    def test_keyboard_reader_failure_pauses_without_releasing_control(self):
+        self.w.key_state_reader=Mock(side_effect=OSError('keyboard unavailable'))
+        self.w.reconcile_keyboard()
+        self.assertFalse(self.w.pressed)
+        self.w.manual.pause_control.assert_called_once_with('Keyboard state unavailable')
+        self.w.manual.release.assert_not_called()
     def test_reconnect_starts_with_no_latched_keys(self):
         self.w.manual.thread.is_alive.return_value=False
         self.w.ip=Mock(get=Mock(return_value='127.0.0.1'));self.w.dance_selected=False

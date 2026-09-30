@@ -2,6 +2,36 @@
 
 ## Version 11.1 — Shared version source and visible GUI label — 2026-09-28
 
+### Automatic control recovery revision 7 — 2026-09-30
+
+- Resume automatically after an acknowledgement delay once all pending replies
+  and the separate neutral command are acknowledged, with a fresh GUI heartbeat.
+  No additional E press is needed. Keep the existing socket and repeat the
+  enable handshake before allowing new commands.
+- Require release and a new press for movement keys held or pressed during the
+  pause. Retain Dance selection but require fresh decisions/measurements after
+  recovery; never replay a queued flight action or restart an interrupted test.
+- Preserve explicit Q / Esc release, focus/input-error holds, flight-action
+  holds and ambiguous/rejected reply handling. Heartbeat-only pauses recover
+  automatically when GUI updates return. Log automatic versus explicit resume.
+- Display version 11.1 / `control-auto-resume-7`. No MSDKRemote changes.
+
+### Control pause revision 6 — 2026-09-30
+
+- Keep the control TCP connection open when command acknowledgements exceed
+  their deadline. The 250 ms RC threshold now latches a movement pause and sends
+  a neutral command; it no longer triggers automatic disable or disconnection.
+- Keep late replies paired with their original commands in FIFO order. Resume
+  requires a separate neutral acknowledgement, no pending replies, a fresh GUI
+  heartbeat and an explicit Enable (E). Never replay old movement or flight actions.
+- Pause on unexpected reply bytes and log their raw contents. Ignore empty line
+  separators only. An ambiguous reply stream stays connected but requires an
+  operator reconnect before movement can resume.
+- Pause movement on GUI heartbeat/focus loss while retaining the connection.
+  Show CONTROL CONNECTED - MOVEMENT PAUSED in the GUI and prediction recordings.
+  Explicit release/disconnect still works; actual peer/network failures are reported.
+- Display version 11.1 / `control-pause-6`. No MSDKRemote or protocol changes.
+
 ### Search debugging revision 5 — 2026-09-29
 
 - Fix the heading timestamp race found in session `20260929_121324_fa7092`:

@@ -113,8 +113,9 @@ class DebugContracts(unittest.TestCase):
         c.update(set());c.enable();c.start();wait_for(lambda:c.enabled)
         c.start_search_test(Settings(search_yaw_degrees=80),lambda:heading(time.monotonic()),'RIGHT')
         self.assertTrue(peer.motion.wait(.3));c.stop_search_test()
-        self.assertTrue(peer.zero.wait(.20));self.assertTrue(peer.disabled.wait(.30))
-        c.thread.join(1)
+        self.assertTrue(peer.zero.wait(.20));wait_for(lambda:c.communication_paused)
+        self.assertFalse(peer.disabled.is_set());self.assertTrue(c.thread.is_alive())
+        c.stop();c.thread.join(1)
         self.assertFalse(c.wanted);self.assertFalse(c.enabled)
         self.assertTrue(any(e=='search_test_summary' and not d['tail_complete'] for e,d in events))
     def test_dance_scan_uses_full_scale_then_manual_override_obeys_slider(self):

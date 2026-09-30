@@ -112,7 +112,8 @@ def render_bundle(frame,analysis,decision,mode,stale_seconds=.75,now=None,output
         if authority.get('time') is not None:
             active=authority.get('active') and abs(authority['time']-chosen.decoded_at)<=.35
         recent_ack=active and 0<=authority.get('time',0)-ack.get('time',0)<=.35
-        if not active:execution='CONTROL OFF - SEARCH NOT EXECUTING'
+        if authority.get('connected') and authority.get('paused'):execution='CONTROL CONNECTED - MOVEMENT PAUSED'
+        elif not active:execution='CONTROL OFF - SEARCH NOT EXECUTING'
         elif authority.get('motion_hold'):execution='CONTROL ON - MOVEMENT PAUSED'
         elif authority.get('mode')=='MANUAL' or authority.get('keyboard_override'):execution='MANUAL CONTROL - SEARCH NOT EXECUTING'
         elif not recent_ack:execution='CONTROL ON - AWAITING ACK'
