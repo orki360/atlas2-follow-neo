@@ -3,6 +3,23 @@ import numpy as np
 import scipy.linalg
 
 
+def positive_covariance(covariance):
+    """Symmetrize roundoff; repair only tiny PSD loss, never arbitrary corruption."""
+    cov=np.asarray(covariance,dtype=np.float64)
+    if not np.isfinite(cov).all():raise np.linalg.LinAlgError('Non-finite covariance')
+    cov=(cov+cov.T)*.5
+    try:
+        np.linalg.cholesky(cov)
+    except np.linalg.LinAlgError:
+        scale=max(1.,float(np.max(np.abs(np.diag(cov)))))
+        minimum=float(np.linalg.eigvalsh(cov)[0])
+        if minimum < -1e-10*scale:
+            raise np.linalg.LinAlgError('Indefinite covariance beyond roundoff tolerance')
+        cov+=np.eye(cov.shape[0])*(max(0.,-minimum)+1e-12*scale)
+        np.linalg.cholesky(cov)
+    return cov
+
+
 """
 Table for the 0.95 quantile of the chi-square distribution with N degrees of
 freedom (contains values for N=1, ..., 9). Taken from MATLAB/Octave's chi2inv
@@ -213,7 +230,11 @@ class KalmanFilter(object):
             Returns the measurement-corrected state distribution.
 
         """
+        if not np.isfinite(mean).all() or not np.isfinite(measurement).all():
+            raise np.linalg.LinAlgError('Non-finite Kalman mean or measurement')
+        covariance=positive_covariance(covariance)
         projected_mean, projected_cov = self.project(mean, covariance)
+        projected_cov=positive_covariance(projected_cov)
 
         chol_factor, lower = scipy.linalg.cho_factor(
             projected_cov, lower=True, check_finite=False)
@@ -223,8 +244,12 @@ class KalmanFilter(object):
         innovation = measurement - projected_mean
 
         new_mean = mean + np.dot(innovation, kalman_gain.T)
-        new_covariance = covariance - np.linalg.multi_dot((
-            kalman_gain, projected_cov, kalman_gain.T))
+        # Joseph form avoids subtracting near-equal large matrices after a long
+        # prediction gap. This remains the same BoT-SORT filter and measurement.
+        residual=np.eye(8)-kalman_gain@self._update_mat
+        std=self._std_weight_position*np.asarray([mean[2],mean[3],mean[2],mean[3]])
+        noise=np.diag(std*std)
+        new_covariance=positive_covariance(residual@covariance@residual.T+kalman_gain@noise@kalman_gain.T)
         return new_mean, new_covariance
 
     def gating_distance(self, mean, covariance, measurements,

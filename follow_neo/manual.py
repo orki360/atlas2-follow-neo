@@ -180,7 +180,7 @@ class ManualControl:
     def stop_search_test(self):
         with self.lock:self._stop_search_test('operator_stop')
 
-    def start_search_test(self,settings,heading_provider,scenario):
+    def start_search_test(self,settings,heading_provider,scenario,*,boost=False):
         with self.lock:
             if not self.enabled or not self.wanted or self.motion_hold or self.stop_event.is_set():
                 raise ValueError('Connect control and Enable (E) before a search test')
@@ -188,7 +188,7 @@ class ManualControl:
             if self.search_test and not self.search_test.finished:
                 raise ValueError('Wait for the 2-second post-stop measurement to finish')
             heading=heading_provider();now=time.monotonic()
-            self.search_test=SearchTest(settings,heading,now,scenario,self.on_event)
+            self.search_test=SearchTest(settings,heading,now,scenario,self.on_event,boost=boost)
             self.heading_provider=heading_provider;self.mode='SEARCH_TEST'
             self.keys.clear();self.action=None;self.smoother.reset()
             self.dance_status='Search test / '+scenario
@@ -358,7 +358,8 @@ class ManualControl:
                                     and gate_reason.startswith(('Tracking /','Kalman recovery /'))
                                     and phase in ('APPROACH','VISUAL_HOLD','HOLD_REACQUIRE','CONFIRM_STOP'))
                             shaped_values=self.smoother.update(raw_values,command_time,active,
-                                damped_yaw=bool(decision and decision.get('centering_control')))
+                                damped_yaw=bool(decision and decision.get('centering_control')),
+                                damped_lateral=bool(decision and (decision.get('centering_control') or {}).get('lateral_control')))
                         if gate_reason.startswith('Kalman recovery /'):
                             # Do not let the smoothing history delay the coast
                             # caps/decay, or carry old roll past its deadline.
@@ -417,6 +418,7 @@ class ManualControl:
                         'prediction_forward_allowed':decision.get('prediction_forward_allowed',False) if decision else False,
                         'prediction_quality':decision.get('prediction_quality') if decision else None,
                         'centering_control':decision.get('centering_control') if decision else None,
+                        'forward_control':decision.get('forward_control') if decision else None,
                         'track_support':decision.get('track_support') if decision else None,
                         'shaped_values':list(shaped_values),
                         'policy_values':list(policy_values) if policy_values is not None else None,

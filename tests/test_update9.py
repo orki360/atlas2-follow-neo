@@ -234,9 +234,9 @@ class KalmanTests(unittest.TestCase):
 
 class SettingsAndTelemetryTests(unittest.TestCase):
     def test_ranges_migration_and_saved_values(self):
-        for degrees in (0.,180.):
+        for degrees in (0.,180.,360.):
             for seconds in (2.,10.):replace(Settings(),search_yaw_degrees=degrees,edge_search_seconds=seconds).validate()
-        for change in ({'search_yaw_degrees':181},{'search_yaw_degrees':-1},{'edge_search_seconds':1.9},
+        for change in ({'search_yaw_degrees':361},{'search_yaw_degrees':-1},{'edge_search_seconds':1.9},
                        {'edge_search_seconds':10.1},{'search_yaw_degrees':float('nan')}):
             with self.assertRaises(ValueError):replace(Settings(),**change).validate()
         old={'schema_version':4,'settings':{'stop_width':.24,'confidence':.75,'edge_search_seconds':1.,'follow_and_hold':False}}

@@ -145,9 +145,9 @@ class ScanTests(unittest.TestCase):
         self.assertEqual(d['scan_target_degrees'],10)
         d=self.step(11.5,10);self.assertEqual(d['scan_yaw'],0)
         d=self.step(11.7,10);self.assertLess(d['scan_yaw'],0)
-    def test_boost_is_short_then_scan_has_no_full_yaw_override(self):
+    def test_narrow_arc_starts_braking_scan_without_full_boost(self):
         d=self.begin(outward=True);end=d['until']
-        self.assertEqual(d['phase'],'BOOST');self.assertEqual(yaw_override(self.decision(d,self.now),self.now,9),1)
+        self.assertEqual(d['phase'],'SCAN');self.assertEqual(yaw_override(self.decision(d,self.now),self.now,9),0)
         d=self.step(10.96,3);self.assertEqual(d['phase'],'SCAN');self.assertEqual(d['until'],end)
         self.assertEqual(yaw_override(self.decision(d,10.96),10.96,9),0)
         d=self.step(11.2,3);values,status=dance_command(self.decision(d,11.2),11.2,9)

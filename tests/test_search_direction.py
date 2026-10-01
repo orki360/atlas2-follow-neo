@@ -41,9 +41,15 @@ class DirectionTests(unittest.TestCase):
                 d=self.begin(side,edge=True);deadline=d['until']
                 self.assertEqual(d['phase'],'BOOST')
                 d=self.step(self.start+.36,side*3)
+                self.assertEqual(d['phase'],'BOOST')
+                d=self.step(self.start+.55,side*50)
                 self.assertEqual(d['phase'],'SCAN');self.assertEqual(d['scan_target_degrees'],side*90)
-                d=self.step(self.start+.55,side*3)
-                values,_=dance_command(self.decision(d,self.start+.55),self.start+.55,9.)
+                self.r.rate.update=Mock(return_value=0.)
+                d=self.step(self.start+.56,side*50)
+                values,_=dance_command(self.decision(d,self.start+.56),self.start+.56,9.)
+                self.assertGreater(values[0]*side,0)  # no fixed pause at handoff
+                d=self.step(self.start+.65,side*50)
+                values,_=dance_command(self.decision(d,self.start+.65),self.start+.65,9.)
                 self.assertGreater(values[0]*side,0);self.assertLessEqual(abs(values[0]),1.)
                 self.assertEqual(values[1:],(0.,0.,0.));self.assertEqual(d['until'],deadline)
     def test_already_reached_boundary_reverses_without_recentering_range(self):
@@ -80,6 +86,14 @@ class DirectionTests(unittest.TestCase):
     def test_send_gate_holds_boost_within_braking_margin(self):
         d=self.begin(1,edge=True);d.update(angle_progress_degrees=88,boost_brake_margin_degrees=3)
         self.assertEqual(yaw_override(self.decision(d,self.start),self.start,9),0)
+
+    def test_boost_send_gate_passes_350_ms_but_obeys_backup_limit(self):
+        d=self.begin(1,edge=True)
+        d.update(heading_time=self.start+.349)
+        self.assertEqual(yaw_override(self.decision(d,self.start+.349),self.start+.349,9),1)
+        self.assertEqual(yaw_override(self.decision(d,self.start+.351),self.start+.351,9),1)
+        d.update(heading_time=self.start+2.)
+        self.assertEqual(yaw_override(self.decision(d,self.start+2.),self.start+2.,9),0)
     def test_recorded_left_loss_skips_boost_when_already_turning_toward_boundary(self):
         r=RecoverySearch();s=Settings(search_yaw_degrees=90,edge_search_seconds=2)
         r.eligible=True;r.source_time=10.;r.loss_heading=101.8;r.loss_heading_time=10.05

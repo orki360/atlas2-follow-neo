@@ -86,7 +86,7 @@ class DanceSmoother:
     def reset(self):
         self.values=ZERO; self.last_time=None
 
-    def update(self,values,now,active=True,damped_yaw=False):
+    def update(self,values,now,active=True,damped_yaw=False,damped_lateral=False):
         if not active or not math.isfinite(now):
             self.reset(); return ZERO
         if self.last_time is None or not 0<=now-self.last_time<=.25:
@@ -99,7 +99,7 @@ class DanceSmoother:
             if i==0 and damped_yaw and (target==0 or old*target<0 or abs(target)<abs(old)):
                 # Let early braking take effect promptly; a reversal still passes zero.
                 value=0. if target==0 or old*target<0 else target
-            elif i==3 and (target==0 or old*target<0 or abs(target)<abs(old)):
+            elif (i==3 or i==2 and damped_lateral) and (target==0 or old*target<0 or abs(target)<abs(old)):
                 value=0. if old*target<0 else target
             else:
                 waypoint=0. if old*target<0 else target

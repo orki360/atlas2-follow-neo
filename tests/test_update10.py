@@ -80,7 +80,7 @@ class ConfigTests(unittest.TestCase):
         s.configure_search(180,10,True)
         self.assertEqual(s.generation,12);self.assertFalse(s.reset_event.is_set());self.assertIs(s.result,old)
         self.assertEqual(s.settings.search_yaw_degrees,180);self.assertEqual(s.settings.edge_search_seconds,10)
-        with self.assertRaises(ValueError):s.configure_search(181,10,True)
+        with self.assertRaises(ValueError):s.configure_search(361,10,True)
         self.assertEqual(s.settings.search_yaw_degrees,180)
     def test_gui_search_apply_does_not_apply_other_pending_settings(self):
         w=FollowLabWindow.__new__(FollowLabWindow);w.settings=Settings(confidence=.4)

@@ -7,16 +7,12 @@ scale with rate-aware braking; no translation is requested.
 import math
 from .edge_search import EdgeYawSearch
 from .telemetry import fresh_heading
-from .centering import HeadingRate
+from .search_motion import (SearchHeadingRate,SearchYawProfile,braking_distance,
+                            BOOST_MAX_SECONDS,NOMINAL_YAW_RATE,MAX_BOOST_ANGLE,search_duration_limit)
 
-BOOST_SECONDS = .35
 SEARCH_GRACE_SECONDS = .45
 BOUNDARY_TOLERANCE = .5
 REVERSAL_PAUSE = .15
-# Allow for remaining BOOST time and delayed aircraft response. This is a
-# conservative planning margin, not a calibrated physical stopping distance.
-BOOST_BRAKE_LOOKAHEAD = .45
-BOOST_BRAKE_BASE_DEGREES = 3.
 
 
 class RecoverySearch:
@@ -32,11 +28,12 @@ class RecoverySearch:
         self.direction=0;self.target=0.;self.reversal_until=0.
         self.verifying=False;self.verify_hits=0;self.verify_since=None;self.verify_last=None
         self.loss_source=None
-        self.rate=HeadingRate();self.requested_duration=0.;self.boundaries=set()
+        self.rate=SearchHeadingRate();self.yaw_profile=SearchYawProfile()
+        self.requested_duration=0.;self.boundaries=set()
         self.box_edge=False
         self.estimated_direction=0;self.direction_source='none'
         self.first_scan_direction=0;self.boost_exit_reason=None
-        self.boost_brake_margin=BOOST_BRAKE_BASE_DEGREES
+        self.boost_brake_margin=braking_distance(NOMINAL_YAW_RATE*.6)
         self.centered=True;self.low=self.high=0.;self.span_mode='centered'
         self.heading_missing_since=None
 
@@ -73,6 +70,8 @@ class RecoverySearch:
             self.estimated_direction=-1;self.direction_source='no_direction_left_fallback'
 
     def _scan(self,now):
+        previous_phase=self.phase
+        previous_direction=self.direction
         self.phase='SCAN';self.reason='sweeping'
         # Freeze the loss estimate for this search; BOOST must not silently
         # change the first scan direction. A reached boundary still reverses.
@@ -80,7 +79,12 @@ class RecoverySearch:
         self.target=self.high if side>0 else self.low
         if side*(self.offset-self.target)>=-BOUNDARY_TOLERANCE:
             self.boundaries.add(side);self.target=self.low if side>0 else self.high
-        self.reversal_until=now+REVERSAL_PAUSE
+        # A same-direction BOOST handoff needs no reversal pause. Still let
+        # SCAN's rate-aware braking compute zero when the boundary is close.
+        continues_boost=(previous_phase=='BOOST'
+                         and previous_direction*(self.target-self.offset)>BOUNDARY_TOLERANCE)
+        self.reversal_until=now if continues_boost else now+REVERSAL_PAUSE
+        self.yaw_profile.reset(now,float(previous_direction) if continues_boost else 0.)
 
     def _set_span(self):
         self.span_mode='centered' if self.centered else 'directional'
@@ -98,23 +102,33 @@ class RecoverySearch:
         # a budget, never a claim that the measured arc has been completed.
         distance=self.angle*(1.5 if self.centered else 2.)
         planned=1.+distance/24.
-        self.duration=min(10.,max(settings.edge_search_seconds,planned)) if settings.search_auto_duration else settings.edge_search_seconds
+        self.duration=min(search_duration_limit(self.angle),max(settings.edge_search_seconds,planned)) if settings.search_auto_duration else settings.edge_search_seconds
         self.until=now+self.duration;self.loss_source=self.source_time
         self.last_heading=heading['yaw_deg'];self.heading_time=heading['time'];self.heading_source=heading.get('source')
         self.offset=(self.last_heading-(self.last_heading if anchor is None else anchor)+180)%360-180
 
-    def start_test(self,now,settings,heading,scenario):
+    def start_test(self,now,settings,heading,scenario,*,boost=False):
         if scenario not in ('LEFT','RIGHT','CENTER'):raise ValueError('Unknown search scenario')
+        if boost and scenario=='CENTER':raise ValueError('BOOST test requires LEFT or RIGHT')
         if not fresh_heading(heading,now):raise ValueError('Fresh aircraft heading required')
         if not settings.edge_search_enabled or settings.search_yaw_degrees<=0:raise ValueError('Enable search and set a nonzero angle')
         self.reset();self.source_time=now;self.eligible=True
         self.centered=scenario=='CENTER';self.estimated_direction=1 if scenario=='RIGHT' else -1
-        self.direction_source='debug_scenario';self.begin(now,settings,heading);self._scan(now)
+        self.direction_source='debug_scenario';self.begin(now,settings,heading)
+        if boost:
+            # Inject the edge-loss trigger only. Subsequent transitions and
+            # command gates are the unchanged production BOOST / SCAN logic.
+            self.direction=self.first_scan_direction
+            self.phase='BOOST';self.reason='edge_catchup'
+        else:self._scan(now)
 
     def _boost_boundary_close(self,yaw_rate):
         closing=0. if yaw_rate is None else max(0.,self.direction*yaw_rate)
-        self.boost_brake_margin=BOOST_BRAKE_BASE_DEGREES+closing*BOOST_BRAKE_LOOKAHEAD
-        boundary=self.high if self.direction>0 else self.low
+        # Reserve a minimum approach distance during startup, then use measured
+        # closing speed. Both phases use the same response/deceleration model.
+        self.boost_brake_margin=braking_distance(max(NOMINAL_YAW_RATE*.6,closing))
+        # A larger search expands SCAN, not the initial full-power catch-up.
+        boundary=self.direction*min(MAX_BOOST_ANGLE,self.high if self.direction>0 else -self.low)
         return self.direction*(boundary-self.offset)<=self.boost_brake_margin
 
     def update(self,now,missing,stale,spacing_phase,close,settings,heading=None,
@@ -150,8 +164,10 @@ class RecoverySearch:
                         self.verifying=False;self.verify_hits=0
                     if self.phase=='BOOST':
                         boundary_close=self._boost_boundary_close(yaw_rate)
-                        if now-self.started>=BOOST_SECONDS or boundary_close:
-                            self.boost_exit_reason='boundary_braking' if boundary_close else 'boost_time_elapsed'
+                        if now-self.started>=BOOST_MAX_SECONDS:
+                            self.boost_exit_reason='boost_timeout';self.end('boost_timeout')
+                        elif boundary_close:
+                            self.boost_exit_reason='boundary_braking'
                             self._scan(now)
                     if self.phase=='SCAN' and not self.verifying and now>=self.reversal_until:
                         toward_low=self.target==self.low
@@ -159,7 +175,9 @@ class RecoverySearch:
                         if reached:
                             self.boundaries.add(-1 if toward_low else 1)
                             self.target=self.high if toward_low else self.low;self.reversal_until=now+REVERSAL_PAUSE
-                    if not self.verifying:self.reason='edge_catchup' if self.phase=='BOOST' else 'sweeping'
+                            self.yaw_profile.reset(now)
+                    if not self.verifying and self.phase in ('BOOST','SCAN'):
+                        self.reason='edge_catchup' if self.phase=='BOOST' else 'sweeping'
         elif not self.consumed:
             if not missing and valid_heading:
                 self.loss_heading=heading['yaw_deg'];self.loss_heading_time=heading['time'];self.loss_heading_source=heading.get('source')
@@ -184,28 +202,36 @@ class RecoverySearch:
         active=self.phase in ('BOOST','SCAN') and not paused
         if candidate_pending and self.phase in ('BOOST','SCAN'):self.reason='candidate_verifying'
         scan_yaw=0.
+        motion=dict(control_reason='inactive',desired_rate_deg_s=None)
         if active and self.phase=='SCAN' and now>=self.reversal_until:
             distance=self.target-self.offset
             if abs(distance)>BOUNDARY_TOLERANCE:
-                # Dampen approach to the boundary; no minimum turning floor.
-                closing_rate=0. if yaw_rate is None else math.copysign(1.,distance)*yaw_rate
-                remaining=max(0.,abs(distance)-max(0.,closing_rate)*.45)
-                scan_yaw=math.copysign(min(1.,remaining*.025),distance)
+                scan_yaw=self.yaw_profile.update(distance,yaw_rate,now)
+                motion=dict(self.yaw_profile.diagnostics)
+        elif active and self.phase=='BOOST':
+            self.yaw_profile.reset(now,float(self.direction))
+            motion=dict(control_reason='boost',desired_rate_deg_s=self.direction*NOMINAL_YAW_RATE)
+        else:
+            self.yaw_profile.reset(now)
+            motion['control_reason']='reversal_pause' if active and self.phase=='SCAN' else self.reason
         direction=(self.direction if self.phase=='BOOST' else (1 if scan_yaw>0 else -1 if scan_yaw<0 else 0)) if active else 0
         return dict(active=active,paused=paused,phase=self.phase,verifying=self.verifying,verify_hits=self.verify_hits,
             direction=direction,candidate_direction=self.edge.direction,started=self.started,until=self.until,
             first_scan_direction=self.first_scan_direction or self.estimated_direction,
             search_direction_source=self.direction_source,boost_exit_reason=self.boost_exit_reason,
+            boost_max_seconds=BOOST_MAX_SECONDS,
+            boost_until=self.started+BOOST_MAX_SECONDS if self.started is not None else None,
             boost_brake_margin_degrees=self.boost_brake_margin,
             source_time=self.loss_source if self.started is not None else self.source_time,measurement_id=self.measurement_id,
             reason=self.reason,consumed=self.consumed,evidence=dict(self.edge.evidence),
             angle_degrees=self.angle if self.started is not None else settings.search_yaw_degrees,
-            boost_angle_degrees=(self.high if self.direction>0 else -self.low),angle_progress_degrees=max(0.,self.direction*self.offset),
+            boost_angle_degrees=min(MAX_BOOST_ANGLE,self.high if self.direction>0 else -self.low),angle_progress_degrees=max(0.,self.direction*self.offset),
             span_mode=self.span_mode,scan_min_degrees=self.low,scan_max_degrees=self.high,
             yaw_full_scale=True,
             scan_offset_degrees=self.offset,scan_target_degrees=self.target,scan_yaw=scan_yaw,
             heading_time=self.heading_time,heading_source=self.heading_source,
-            heading_rate_deg_s=yaw_rate,requested_duration_seconds=self.requested_duration or settings.edge_search_seconds,
+            heading_rate_deg_s=yaw_rate,search_motion=motion,
+            requested_duration_seconds=self.requested_duration or settings.edge_search_seconds,
             coverage_complete=len(self.boundaries)==2,boundaries_reached=sorted(self.boundaries),
             auto_duration=settings.search_auto_duration,
             duration_seconds=self.duration if self.started is not None else settings.edge_search_seconds)
@@ -225,8 +251,8 @@ def scan_command(decision,now,started):
     if (not 0<=now-stamp<=.20 or not started<=search['started']<=stamp<=now<search['until']
         or not search['source_time']<=search['started']
         or not 0<=now-search['heading_time']<=.25
-        or not 2<=search['duration_seconds']<=10 or abs(search['until']-search['started']-search['duration_seconds'])>1e-6
-        or not 0<search['angle_degrees']<=180 or not -180<=low<=0<=high<=180
+        or not 2<=search['duration_seconds']<=search_duration_limit(search['angle_degrees']) or abs(search['until']-search['started']-search['duration_seconds'])>1e-6
+        or not 0<search['angle_degrees']<=360 or not -360<=low<=0<=high<=360
         or abs(high-low-search['angle_degrees'])>1e-6 or not low<=search['scan_target_degrees']<=high
         or abs(search['scan_yaw'])>(1. if search.get('yaw_full_scale') is True else .25)
         or search.get('paused') or search.get('verifying') or decision.get('candidate_pending')

@@ -22,6 +22,7 @@ from .models import DEFAULT_MODEL, LEGACY_MODEL
 from .manual import ManualControl, MOVEMENT_KEYS, AXES, DEFAULT_AXIS_LIMITS
 from .control_status import control_indicator, acknowledged_command_text, target_status_text
 from .state_diagram import LiveStateDiagram
+from .approach import forward_status_text
 
 
 # Windows keeps these virtual-key codes stable even when the active keyboard
@@ -179,6 +180,7 @@ class FollowLabWindow:
         self.tabs=ttk.Notebook(sidebar,width=410);self.tabs.pack(fill='both',expand=True)
         self.diagram_tab=ttk.Frame(self.tabs,padding=5)
         self.tabs.add(self.diagram_tab,text='Live states')
+        ttk.Button(self.diagram_tab,text='STOP SEARCH TEST',command=self.stop_search_test).pack(side='bottom',fill='x',pady=3)
         self.state_diagram=LiveStateDiagram(self.diagram_tab)
         self.state_diagram.pack(fill='both',expand=True)
         def page(title):
@@ -222,20 +224,29 @@ class FollowLabWindow:
                 selected,self.axis_entry_vars[selected].get()))
             ttk.Label(row,textvariable=self.axis_limit_labels[axis],width=7).pack(side='left',padx=(3,0))
         ttk.Label(self.speed_bar,text='Normal caps for tracking / keyboard\nSearch: yaw up to 100%, with braking',foreground='#8cbbb8').pack(anchor='w',pady=3)
+        self.forward_status=tk.StringVar(value='Approach: waiting for control data')
+        ttk.Label(self.speed_bar,textvariable=self.forward_status,foreground='#8cbbb8',wraplength=290).pack(anchor='w',pady=3)
         self.search_bar=ttk.LabelFrame(controls_page,text='Search after target loss',padding=8);self.search_bar.pack(fill='x',pady=8)
-        for label,key,lo,hi,step in (('Search angle (deg)','search_yaw_degrees',0,180,5),
+        for label,key,lo,hi,step in (('Search angle (deg)','search_yaw_degrees',0,360,5),
                                      ('Search time (s)','edge_search_seconds',2,10,.5)):
             row=ttk.Frame(self.search_bar);row.pack(fill='x',pady=3)
             ttk.Label(row,text=label).pack(side='left',padx=(0,8))
             ttk.Spinbox(row,textvariable=self.search_vars[key],from_=lo,to=hi,
                         increment=step,width=7).pack(side='right')
         ttk.Button(self.search_bar,text='Apply search',command=self.apply_search).pack(fill='x',pady=5)
-        ttk.Label(self.search_bar,text='Side loss: full angle toward the target.\nCentre loss: half the angle on each side.\nAuto time: up to 10 s. 0 deg disables turning.',
+        ttk.Label(self.search_bar,text='Side loss: full angle toward the target.\nCentre loss: half the angle on each side.\nAuto time: up to 10 s for angles <=180;\nup to 35 s for larger angles.\n0 deg disables turning.',
                   foreground='#8cbbb8',wraplength=300).pack(anchor='w')
         self.search_test_scenario=tk.StringVar(value='CENTER')
         ttk.Combobox(self.search_bar,textvariable=self.search_test_scenario,values=('LEFT','RIGHT','CENTER'),state='readonly',width=12).pack(fill='x',pady=3)
         self.search_test_button=ttk.Button(self.search_bar,text='START SEARCH TEST',command=self.start_search_test)
         self.search_test_button.pack(fill='x',pady=3)
+        boost_row=ttk.Frame(self.search_bar);boost_row.pack(fill='x',pady=3)
+        self.boost_test_direction=tk.StringVar(value='RIGHT')
+        ttk.Combobox(boost_row,textvariable=self.boost_test_direction,values=('LEFT','RIGHT'),
+                     state='readonly',width=7).pack(side='left',padx=(0,5))
+        self.boost_test_button=ttk.Button(boost_row,text='TEST BOOST -> SCAN',
+                                        command=lambda:self.start_search_test(boost=True))
+        self.boost_test_button.pack(side='left',fill='x',expand=True)
         ttk.Button(self.search_bar,text='STOP SEARCH TEST',command=self.stop_search_test).pack(fill='x',pady=3)
         self.search_test_status=tk.StringVar(value='Yaw only, Dance OFF. Enable (E) first.\nUses applied search angle/time. No target required.')
         ttk.Label(self.search_bar,textvariable=self.search_test_status,wraplength=300,foreground='#6ad5cb').pack(anchor='w',pady=3)
@@ -269,7 +280,7 @@ class FollowLabWindow:
         self.edge_search_on=tk.BooleanVar(value=bool(values['edge_search_enabled']))
         ttk.Checkbutton(self.search_bar,text='Lost-target recovery: BOOST / scan',variable=self.edge_search_on).pack(anchor='w',pady=4)
         self.search_auto=tk.BooleanVar(value=bool(values['search_auto_duration']))
-        ttk.Checkbutton(self.search_bar,text='Auto scan time for angle (max 10 s)',variable=self.search_auto).pack(anchor='w',pady=4)
+        ttk.Checkbutton(self.search_bar,text='Auto scan time for angle (up to 35 s)',variable=self.search_auto).pack(anchor='w',pady=4)
         ttk.Button(settings,text='Apply / keep target',command=self.apply).grid(row=len(controls)+2,columnspan=2,sticky='ew')
         self.settings_note=tk.StringVar(value='Settings ready')
         ttk.Label(settings,textvariable=self.settings_note,foreground='#d9b56c',wraplength=285).grid(row=len(controls)+3,columnspan=2,sticky='w',pady=6)
@@ -384,13 +395,15 @@ class FollowLabWindow:
             return control.control_snapshot()
         return dict(active=False,mode='MANUAL',reason='Control disconnected')
 
-    def start_search_test(self):
+    def start_search_test(self,*,boost=False):
         try:
             if not self.session or self.stopping or not self.manual or self.manual.host!=self.session.receiver.host:
                 raise ValueError('Connect video/telemetry and control to the same phone first')
             self.clear_keyboard_input('search_test_start')
-            self.manual.start_search_test(self.session.get_settings(),self.session.heading.get,self.search_test_scenario.get())
+            scenario=self.boost_test_direction.get() if boost else self.search_test_scenario.get()
+            self.manual.start_search_test(self.session.get_settings(),self.session.heading.get,scenario,boost=boost)
             self.dance_selected=False;self.session.restart_control()
+            self.tabs.select(self.diagram_tab)
             self.notice.set('Search test running. Yaw only. Logs: '+str(self.session.output/('search_test_'+self.manual.search_test.run_id)))
             self.canvas.focus_set()
         except (ValueError,RuntimeError,OSError) as exc:self.notice.set(str(exc))
@@ -671,6 +684,7 @@ class FollowLabWindow:
             snapshot=self.manual.control_snapshot();test=snapshot.get('search_test')
             if test:
                 self.search_test_status.set(f"{'DONE' if test.get('finished') else 'SETTLING' if test.get('tail') else 'RUNNING'} | {test.get('reason','starting')}\n"
+                    f"{test.get('test_kind','SCAN_ONLY')} / {test.get('phase','--')}\n"
                     f"Measured {test.get('measured_offset_degrees',0):+.1f} deg | target {test.get('target_offset_degrees',0):+.1f} deg\n"
                     f"Range {test.get('scan_min_degrees',0):+.0f} to {test.get('scan_max_degrees',0):+.0f} deg\n"
                     f"Log: search_test_{test.get('run_id','')}")
@@ -700,6 +714,8 @@ class FollowLabWindow:
                 compute=s.model_info.get('compute',{}) if s.model_info else {}
                 compute_label=compute.get('label','loading')
                 if compute.get('fallback_reason'): compute_label+=' (GPU fallback)'
+                self.forward_status.set(forward_status_text(decision,self.current_axis_limits()['forward'])
+                    +'\nSide: '+(decision.get('centering_control') or {}).get('lateral_control',{}).get('reason','waiting_measurements'))
                 self.metrics.set(f"{self.model.get()}\nModel: {compute_label}\n"
                     f"YOLO: {inference} | target age: {age_text}\n"
                     f"Track source: {decision.get('track_support','--')}\n"

@@ -3,6 +3,7 @@ from collections import deque
 import math
 import statistics
 from .telemetry import fresh_heading,HEADING_MAX_AGE
+from .search_motion import BOOST_MAX_SECONDS,search_duration_limit
 
 
 class EdgeYawSearch:
@@ -118,7 +119,7 @@ def yaw_override(decision,now,dance_started=None):
         limit=search.get('boost_angle_degrees')
         if not isinstance(limit,(int,float)) or not math.isfinite(limit) or not 0<limit<=180:return 0.
         start=search.get('started')
-        if not isinstance(start,(int,float)) or not 0<=now-start<.35:return 0.
+        if not isinstance(start,(int,float)) or not 0<=now-start<BOOST_MAX_SECONDS:return 0.
         margin=search.get('boost_brake_margin_degrees',0.)
         progress=search.get('angle_progress_degrees')
         if (not isinstance(margin,(int,float)) or not math.isfinite(margin) or margin<0
@@ -131,10 +132,10 @@ def yaw_override(decision,now,dance_started=None):
     stamp=decision.get('prediction_time');direction=search.get('direction')
     if (not isinstance(stamp,(int,float)) or not math.isfinite(stamp)
         or direction not in (-1,1) or not 0<=now-stamp<=.20
-        or not source<=start<=stamp<=now<end or not 2<=search['duration_seconds']<=10
+        or not source<=start<=stamp<=now<end or not 2<=search['duration_seconds']<=search_duration_limit(search['angle_degrees'])
         or abs(end-start-search['duration_seconds'])>1e-6
         or not 0<=start-source<=search['duration_seconds']
-        or not 0<search['angle_degrees']<=180
+        or not 0<search['angle_degrees']<=360
         or not 0<=search['angle_progress_degrees']<search.get('boost_angle_degrees',search['angle_degrees'])
         or not 0<=now-search['heading_time']<=HEADING_MAX_AGE
         or dance_started is not None and start<dance_started

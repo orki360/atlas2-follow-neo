@@ -4,6 +4,7 @@ from .policy import SmartTrackingController
 from .telemetry import fresh_heading
 from .types import clamp
 from . import __revision__
+from .approach import LateralEvidence
 
 
 class HeadingRate:
@@ -38,8 +39,9 @@ class DampedTrackingController(SmartTrackingController):
         self.heading_rate=HeadingRate()
         self.last_measurement=None;self.error_rate=0.;self.last_tick=None
         self.centered=True;self.forward_factor=1.;self.diagnostics={}
+        self.lateral=LateralEvidence()
 
-    def compute(self,k,w,h,age,occluded,now,settings,heading=None,measurement_time=None,measured_error=None):
+    def compute(self,k,w,h,age,occluded,now,settings,heading=None,measurement_time=None,measured_error=None,lateral_observation=None):
         out,ex,ey=super().compute(k,w,h,age,occluded,now,settings)
         rate=self.heading_rate.update(heading,now)
         dt=0. if self.last_tick is None else max(0.,min(.1,now-self.last_tick))
@@ -68,6 +70,12 @@ class DampedTrackingController(SmartTrackingController):
         if self.centered or braking or not k.initialized:demand=0.
         demand=clamp(demand,-.55,.55)
         out.yaw=demand*settings.yaw_limit
+        lateral_allowed=(valid and age<=.15 and rate is not None and abs(rate)<=8.
+                         and abs(ex)<=.25 and abs(demand)<=.08)
+        lateral_reason=('waiting_measurements' if not valid or age>.15 else 'waiting_heading'
+                        if rate is None else 'align_yaw_first')
+        out.roll=self.lateral.update(lateral_observation,now,lateral_allowed,lateral_reason)
+        self.roll=out.roll
         # Fast attenuation, gradual recovery. Spacing remains the final distance gate.
         target=min(clamp((.50-abs(ex))/.35,0,1),clamp((.30-abs(demand))/.20,0,1))
         if rate is not None:target=min(target,clamp((45.-abs(rate))/30.,0,1))
@@ -78,5 +86,5 @@ class DampedTrackingController(SmartTrackingController):
             heading_age_ms=None if not fresh_heading(heading,now) else (now-heading['time'])*1000,
             proportional=p,derivative=d,rate_damping=damping,lead_error=lead_error,
             braking=braking,centered=self.centered,yaw_normalized=demand,
-            forward_alignment_scale=self.forward_factor)
+            forward_alignment_scale=self.forward_factor,lateral_control=dict(self.lateral.diagnostics))
         return out,ex,ey

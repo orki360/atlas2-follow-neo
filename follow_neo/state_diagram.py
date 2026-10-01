@@ -38,10 +38,10 @@ def diagram_snapshot(decision, control, selected, connected, now, error=None):
     search=decision.get('edge_search') or {}
     phase=search.get('phase') if connected and fresh and not stale and state!='ERROR' else None
     test=control.get('search_test') or {}
-    testing=mode=='SEARCH_TEST' and not test.get('finished',False)
+    testing=bool(test) and (mode=='SEARCH_TEST' or mode=='MANUAL' and test.get('tail',False))
     if testing:
         # A test has its own planner; never present it as a Dance search.
-        state=None;phase=test.get('phase') if recent(control.get('time'),now) else None
+        state=None;phase=test.get('phase') if control.get('connected') and recent(control.get('time'),now) else None
         reason=test.get('reason') or 'Search test; Dance is off'
     if phase not in PHASES:phase=None
     control_fresh=recent(control.get('time'),now)
@@ -52,7 +52,7 @@ def diagram_snapshot(decision, control, selected, connected, now, error=None):
     elif paused:status='CONNECTED | MOVEMENT PAUSED'
     elif not control_fresh:status='CONNECTED | CONTROL STATUS STALE'
     elif not active:status='CONNECTED | CONTROL NOT ENABLED'
-    elif testing:status='SEARCH TEST | DANCE OFF'
+    elif testing:status=('SEARCH TEST COMPLETE' if test.get('finished') else 'SEARCH TEST SETTLING' if test.get('tail') else 'SEARCH TEST')+' | DANCE OFF'
     elif control.get('keyboard_override'):status='KEYBOARD OVERRIDE'
     elif dance:status='DANCE CONTROL ENABLED'
     else:status='MANUAL | DANCE OFF'
@@ -60,11 +60,11 @@ def diagram_snapshot(decision, control, selected, connected, now, error=None):
     if state in ('WAIT_VIDEO','SEARCH_PAUSED'):color=PAUSED
     held=bool(search.get('paused') or search.get('verifying') or state in ('SEARCH_PAUSED','REACQUIRE'))
     phase_color=PAUSED if held or paused else color
-    if testing:phase_color=CURRENT if active and not paused else PAUSED
+    if testing:phase_color=CURRENT if active and not paused and not test.get('transition_pause') and not test.get('tail') else PAUSED
     ack=control.get('acknowledged') or {}
     values=ack.get('values') or []
     ack_text=('Last RC ACK: yaw '+number(values[0],'+.3f') if values and recent(ack.get('time'),now) else 'Last RC ACK: none recent')
-    if phase in ('BOOST','SCAN'):
+    if phase in ('BOOST','SCAN') or testing and phase=='DONE':
         source=test if testing else search
         offset=source.get('measured_offset_degrees') if testing else source.get('scan_offset_degrees')
         target=source.get('target_offset_degrees') if testing else source.get('scan_target_degrees')
@@ -73,11 +73,21 @@ def diagram_snapshot(decision, control, selected, connected, now, error=None):
         angles='Yaw '+number(offset)+' deg | target '+number(target)+' deg'
         reason=reason+' / '+str(search.get('reason','')) if not testing else reason
     else:angles='Search yaw: --'
-    return dict(state=state,phase=phase,color=color,phase_color=phase_color,status=status,
-                reason=str(reason).replace('_',' '),angles=angles,ack=ack_text,
+    test_details=''
+    if testing:
+        requested=test.get('requested_yaw')
+        percent=requested*100 if isinstance(requested,(int,float)) else None
+        test_details=('Requested YAW '+number(percent,'+.0f')+'% | rate estimate '+number(test.get('filtered_yaw_rate_deg_s',test.get('yaw_rate_deg_s')))+' deg/s'
+            +'\nElapsed '+number(test.get('elapsed_seconds'),'.2f')+' s | BOOST exit: '+str(test.get('boost_exit_reason') or '--'))
+        motion=test.get('search_motion') or {}
+        if motion:test_details+='\n'+str(motion.get('control_reason','--'))+' | target rate '+number(motion.get('desired_rate_deg_s'))+' deg/s'
+        if test.get('transition_pause'):test_details+='\nSCAN pause: YAW 0 | remaining '+number(test.get('pause_remaining_ms'),'.0f')+' ms'
+        test_details+='\nLog: search_test_'+str(test.get('run_id','--'))
+    return dict(state=state,phase=phase,color=color,phase_color=phase_color,status=status,testing=testing,
+                reason=str(reason).replace('_',' '),angles=angles,ack=ack_text,test_details=test_details,
                 spacing=decision.get('spacing_phase','--') if connected and fresh and not stale and not testing else '--',
                 heading='SEARCH TEST PLANNER' if testing else 'SEARCH PLANNER'+(' / HELD' if held and phase in ('BOOST','SCAN') else ''),
-                label='SEARCH TEST' if testing else state or 'NO LIVE DANCE STATE')
+                label=('BOOST -> SCAN TEST' if test.get('test_kind')=='BOOST_SCAN' else 'SEARCH TEST') if testing else state or 'NO LIVE DANCE STATE')
 
 
 class LiveStateDiagram(ttk.Frame):
@@ -100,7 +110,7 @@ class LiveStateDiagram(ttk.Frame):
         self.details.grid(row=3,column=0,sticky='ew',pady=(5,2))
         self.transition=ttk.Label(self,text='Last transition: --',wraplength=380,foreground='#94a9ba')
         self.transition.grid(row=4,column=0,sticky='ew',pady=2)
-        ttk.Label(self,text='Green: Dance enabled   Blue: preview\nAmber: held / waiting   Red: error\nHighlights show state, not proof of aircraft motion.',
+        ttk.Label(self,text='Green: control enabled   Blue: preview\nAmber: held / waiting   Red: error\nHighlights show state, not proof of aircraft motion.',
                   foreground='#94a9ba',wraplength=380).grid(row=5,column=0,sticky='ew',pady=3)
 
     def _node(self,key,x,y,width=160,height=34,label=None):
@@ -134,21 +144,32 @@ class LiveStateDiagram(ttk.Frame):
         self._node('HOVER_WAIT',95,225)
         self._node('DIRECTIONAL_SEARCH',295,225)
         self._node('SEARCH_PAUSED',195,280)
+        main_items=set(c.find_all())
         c.create_rectangle(5,308,385,379,outline='#456070',dash=(3,3))
         self.planner_title=c.create_text(195,319,text='SEARCH PLANNER',fill='#7c9aaa',font=('Segoe UI',9,'bold'))
         for x1,x2 in ((92,108),(187,203),(282,298)):self._arrow(x1,350,x2,350)
         for x,phase in zip((50,145,240,335),PHASES):self._node('phase_'+phase,x,350,width=82,height=30,label=phase)
         self._arrow(50,366,50,375,240,375,240,366)
+        self.planner_items=set(c.find_all())-main_items
         for item in c.find_all():self.base_coordinates[item]=c.coords(item)
 
     def _resize(self,event):
-        scale=max(1,event.width)/390
-        yscale=max(1,event.height)/385
+        self._layout(event.width,event.height)
+
+    def _layout(self,width,height):
+        # Before mapping, Tk reports 1x1. Do not wrap the details to a narrow
+        # column that consumes all the canvas space on the first test update.
+        if width<=1:width=max(390,self.winfo_width())
+        if height<=1:height=100 if self.last_view and self.last_view['testing'] else 385
+        testing=bool(self.last_view and self.last_view['testing'])
+        scale=max(1,width)/390
+        yscale=max(1,height)/(100 if testing else 385)
         for item,coords in self.base_coordinates.items():
-            self.canvas.coords(item,*[value*(scale if i%2==0 else yscale) for i,value in enumerate(coords)])
-        font_size=8 if yscale<.8 else 9
+            self.canvas.itemconfigure(item,state='hidden' if testing and item not in self.planner_items else 'normal')
+            self.canvas.coords(item,*[value*scale if i%2==0 else (value-298 if testing else value)*yscale for i,value in enumerate(coords)])
+        font_size=9 if testing else 8 if yscale<.8 else 9
         for item in self.labels.values():self.canvas.itemconfigure(item,font=('Segoe UI',font_size,'bold'))
-        for label in (self.details,self.transition):label.configure(wraplength=max(150,event.width-10))
+        for label in (self.details,self.transition):label.configure(wraplength=max(150,width-10))
 
     def update_state(self,decision,control,selected,connected,now,error=None):
         if self.last_update is not None and 0<=now-self.last_update<.1:return
@@ -163,6 +184,8 @@ class LiveStateDiagram(ttk.Frame):
             self.last_state=state_key
         previous=self.last_view
         self.last_view=view
+        if previous is None or previous['testing']!=view['testing']:
+            self._layout(self.canvas.winfo_width(),self.canvas.winfo_height())
         self.status.configure(text=view['status'],bg=view['color'])
         self.current.configure(text=view['label'].replace('_',' '))
         if previous is None or any(previous[key]!=view[key] for key in ('state','phase','color','phase_color')):
@@ -172,4 +195,6 @@ class LiveStateDiagram(ttk.Frame):
                 self.canvas.itemconfigure(box,fill=selected_keys.get(key,INACTIVE),outline='#d8f4ee' if active else '#456070',width=2 if active else 1)
                 self.canvas.itemconfigure(self.labels[key],fill='white' if active else '#b5c7d4')
         self.canvas.itemconfigure(self.planner_title,text=view['heading'])
-        self.details.configure(text='Reason: '+view['reason']+'\n'+view['angles']+'\nSpacing: '+str(view['spacing'])+' | '+view['ack'])
+        self.details.configure(text=('' if view['testing'] else 'Reason: '+view['reason']+'\n')+view['angles']
+                               +'\n'+('' if view['testing'] else 'Spacing: '+str(view['spacing'])+' | ')+view['ack']
+                               + ('\n'+view['test_details'] if view['test_details'] else ''))

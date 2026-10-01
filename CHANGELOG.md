@@ -1,5 +1,106 @@
 # CHANGELOG — Dancing Drones / Follow NEO
 
+## Version 12.0.0 — Straight approach and numerical recovery revision 13 — 2026-10-01
+
+Release summary: improved straight-line approach to NEO, measured lateral-motion
+verification, visible approach diagnostics, numerical recovery for BoT-SORT,
+and the retained full-circle search option introduced in revision 12.
+
+Operator feedback — 2026-10-01: the user reports that revision
+`straight-approach-13` is very stable during their testing.
+
+- Prefer yaw alignment and forward approach. Live ROLL now requires at least
+  four consecutive measurement intervals spanning 150 ms, coherent lateral
+  displacement after camera compensation, fresh heading, and a nearly aligned,
+  slowly turning aircraft. Repeated measurements, frame gaps, camera-only motion
+  and unverified predictions cannot establish lateral evidence. Limit lateral
+  demand to 0.10 before the existing operator cap; ramp increases and clear it
+  immediately when evidence or alignment is lost.
+- Keep the configured forward speed and distance/alignment gates. A stationary,
+  centered target does not need to start moving before forward approach is allowed.
+- Show the forward cap and limiting reason near Axis limits, plus lateral evidence
+  status. Record forward/alignment/spacing diagnostics in observations and sent
+  commands; preserve the existing actual-command acknowledgement display.
+- Use Joseph-form covariance correction in the existing BoT-SORT Kalman filter,
+  with symmetry enforcement and a bounded repair for roundoff-scale PSD loss.
+  Reject substantially indefinite or non-finite state instead of masking it.
+- On a tracking linear-algebra failure, discard the partially updated tracker,
+  clear control history and search, output zero, and require fresh target
+  confirmation. Log tracking_numerical_reset with the previous ID and frame.
+  Other controller exceptions retain ERROR handling and now include a traceback.
+- Display revision straight-approach-13. Preserve the 360-degree search option,
+  saved speed settings and MSDKRemote.
+- Validation: 308 regression tests, a hidden offline Tk check, and replay of
+  15,759 recorded detection/warp updates. The original flight exception was not
+  reproduced by that replay; numerical stress and injected-failure tests cover
+  covariance stability, zero commands and fresh reacquisition after failure.
+
+## Version 12.0.0 — Full-circle search revision 12 — 2026-10-01
+
+- Allow search angles from 0 to 360 degrees in the GUI and persisted settings.
+  Side loss scans the full selected angle toward the loss direction; center loss
+  divides the angle equally (360 means 180 degrees on each side).
+- Keep accumulated heading through compass wraparound in Dance and search tests.
+  A directional search still returns across the same arc; it is not endless yaw.
+- For angles above 180 degrees, automatic duration may use up to 35 seconds
+  (360 degrees plans 31 seconds directional or 23.5 seconds centered). Manual
+  search time remains 2–10 seconds; existing arcs up to 180 keep their 10-second cap.
+- Limit the initial BOOST envelope to 180 degrees even for larger SCAN ranges;
+  retain the 2-second BOOST timeout and all reacquisition, heading and stop gates.
+- Validate 360-degree settings, wraparound, both directions, centered coverage,
+  return travel, large-arc BOOST handoff and command rejection contracts offline.
+- Display revision search-360-12. No changes to approach control, axis speed
+  settings or MSDKRemote. Existing saved search angles are not changed.
+
+## Version 12.0.0 — Measured BOOST and stable search braking revision 11 — 2026-10-01
+
+- Replace the fixed 350 ms BOOST exit with an angle/rate-based braking handoff.
+  Share the two-second maximum BOOST duration between planner and send gate;
+  expiry stops the search rather than continuing full yaw in SCAN. Keep confirmed
+  target reacquisition, candidate/heading pauses, control stops and total deadlines.
+- Estimate search yaw rate from a 300 ms window of unwrapped heading samples,
+  reducing sensitivity to repeated cached angles with new local query timestamps.
+  Normal tracking still uses its existing estimator/controller.
+- Give SCAN a continuous distance-based speed profile with rate feedback,
+  hysteresis during braking and limited upward command changes. Preserve immediate
+  zero requests, real reversal pauses and the continuous same-direction handoff.
+  Small arcs can start directly in braking SCAN when insufficient BOOST room remains.
+- Record the braking parameters, filtered rate, desired rate, braking distance,
+  control reason and BOOST exit reason in dedicated test logs; show the rate estimate
+  and control reason in Live states. Keep TEST BOOST -> SCAN and STOP unchanged.
+- Braking values are initial test settings, not a calibrated aircraft model.
+  Validate measured angle, overshoot and reacquisition in flight before further tuning.
+- Display revision search-motion-11. MSDKRemote and saved settings are unchanged.
+
+## Version 12.0.0 — Continuous BOOST-to-SCAN handoff revision 10 — 2026-10-01
+
+- Step 1: remove the fixed 150 ms scan-entry pause only when BOOST hands off to
+  SCAN in the same direction. Immediately use SCAN's existing yaw calculation.
+- Preserve the 350 ms BOOST limit, boundary/rate braking (which can still request
+  zero yaw), actual reversal pauses, direct scan entry, search deadlines and stop gates.
+- Apply the shared planner change to Dance and TEST BOOST -> SCAN. Keep the same
+  live diagram and dedicated logs; metadata identifies revision boost-scan-handoff-10
+  for comparison with the boost-scan-test-9 baseline.
+- No changes to MSDKRemote, saved settings or target tracking. Angle-based BOOST
+  exit is a separate, later step and is not included here.
+
+## Version 12.0.0 — BOOST-to-SCAN diagnostic revision 9 — 2026-10-01
+
+- Add TEST BOOST -> SCAN with LEFT / RIGHT selection beside the existing scan-only
+  test. Run one measured search cycle using the applied angle/time, with yaw only,
+  Dance off and no target required. Explicit control enable and fresh heading are required.
+- Use the production BOOST and SCAN planner and command gates. Preserve the current
+  350 ms BOOST limit and 150 ms scan-entry pause for baseline measurements.
+- Open Live states on test start; show the test phase, scan pause, requested yaw,
+  recent command acknowledgement, measured yaw/rate, elapsed time and BOOST exit reason.
+  Keep STOP SEARCH TEST accessible on the diagram tab.
+- Write test metadata, phase transitions, telemetry samples, command attempts,
+  acknowledgements and the completion summary to the dedicated
+  logs/<session>/search_test_<run_id>/events.jsonl. Identify BOOST_SCAN versus SCAN_ONLY.
+  Retain the two-second post-stop measurement and existing operator/control stop handling.
+- Display revision boost-scan-test-9. No changes to normal Dance timing, tracking,
+  saved settings or MSDKRemote.
+
 ## Version 12.0.0 — Live state diagram and automatic control recovery — 2026-09-30
 
 - Release the current application as version 12.0.0, using VERSION.py as the

@@ -7,6 +7,7 @@ import queue
 import threading
 import time
 import uuid
+import traceback
 
 from .types import Settings, Box, Detection
 from .video import VideoReceiver, LatestValue
@@ -224,6 +225,8 @@ class FollowSession:
                     chosen=controller.tracker.accepted
                     identity_event=decision.get('tracking',{}).get('identity_event')
                     if identity_event:self.log.write('target_reassociated',identity_event)
+                    numerical_event=decision.get('tracking',{}).get('numerical_event')
+                    if numerical_event:self.log.write('tracking_numerical_reset',numerical_event)
                     self.analysis.set({'result':result,'selected_box':None if chosen is None else asdict(chosen.box),'decision':decision})
                 key=(decision['state'],decision['spacing_phase'],decision['stale'],decision['edge_search']['active'])
                 if fresh_result or key!=last_state or now-last_log>=.5:
@@ -241,7 +244,7 @@ class FollowSession:
                           result_to_control_ms=max(0.,now-result['completed_at'])*1000)
                     self.log.write('observation',payload); last_state=key; last_log=now
         except Exception as exc:
-            self.model_error=str(exc); self.log.write('controller_error',{'error':str(exc)})
+            self.model_error=str(exc); self.log.write('controller_error',{'error':str(exc),'traceback':traceback.format_exc()})
             self.decision.set({'state':'ERROR','reason':str(exc),'stale':True,'track_box':None,
                               'intent':{'yaw':0.,'vertical':0.,'roll':0.,'forward':0.},'command_sent':False})
 

@@ -8,6 +8,7 @@ from .spacing import VisualSpacingController
 from .edge_search import EdgeYawSearch
 from .recovery_search import RecoverySearch
 from .centering import DampedTrackingController
+from .approach import forward_diagnostics
 from .prediction import (COAST_SECONDS, COAST_YAW, COAST_VERTICAL, STABLE_FORWARD_SECONDS,
                          fade, forward_fade, continuation_threshold)
 
@@ -68,6 +69,8 @@ class FollowController:
                           max(settings.new_track_confidence,settings.confidence),
                           settings.confidence,continuation_threshold(settings.confidence),**kwargs)
         self.rejected=not accepted
+        if self.tracker_backend=='botsort' and t.numerical_event:
+            self.restart_control();self.last_accepted=None
         if accepted: self.last_accepted=t.accepted
         self.edge_search.observe(accepted,not detections,t.confirmed,
                 t.accepted.box if accepted else None,t.snapshot(source_time),*size,
@@ -89,6 +92,10 @@ class FollowController:
         if self.tracker_backend=='botsort':
             measured_error=None if self.last_accepted is None else (self.last_accepted.box.cx-width*.5)/(width*.5)
             centering_kwargs=dict(heading=heading,measurement_time=mtime,measured_error=measured_error)
+            if real_fresh and self.last_accepted is not None and t.engine is not None:
+                gmc=t.engine.gmc;b=self.last_accepted.box
+                centering_kwargs['lateral_observation']=dict(time=mtime,point=(b.cx,b.cy),width=width,frame_id=t.engine.frame_id,
+                    warp=gmc.last_warp.tolist(),camera_valid=gmc.status=='applied')
         raw,ex,ey=self.smart.compute(k,width,height,age,not real_fresh,now,settings,**centering_kwargs)
         raw.forward*=settings.forward_limit
         current_center=replace(raw);measurement_scale=1. if real_fresh else 0.
@@ -156,6 +163,8 @@ class FollowController:
                 'tracking':t.diagnostics() if self.tracker_backend=='botsort' else {'backend':'legacy'},
                 'candidate_pending':pending,
                 'centering_control':getattr(self.smart,'diagnostics',None),
+                'forward_control':forward_diagnostics(self.policy.state,self.spacing.phase,self.spacing.reason,
+                    self.spacing.forward_scale,getattr(self.smart,'forward_factor',1.),real_fresh,clipped,cmd.forward),
                 'raw_detections':self.raw_detections,'raw_detection_time':self.result_time,
                 'selected_measurement_box':None if t.accepted is None else list(vars(t.accepted.box).values()),
                 'edge_search':search,

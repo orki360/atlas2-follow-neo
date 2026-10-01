@@ -37,6 +37,7 @@ class BoTSORTTracker:
         self.candidate_rejections=[]
         self.acquisition=None
         self.acquisition_attempted=False
+        self.numerical_event=None;self.numerical_recoveries=0
 
     def _acquire(self,valid,current,source_time,threshold):
         """A tentative ID is not a permanent target lock.
@@ -202,6 +203,26 @@ class BoTSORTTracker:
 
     def update(self,detections,source_time,now,frame_id,start_confidence=.45,
                strong_confidence=.25,continuation_confidence=.10,image=None):
+        self.numerical_event=None
+        try:
+            accepted=self._update(detections,source_time,now,frame_id,start_confidence,
+                                  strong_confidence,continuation_confidence,image)
+            if self.target is not None and (not np.isfinite(self.target.mean).all()
+                                            or not np.isfinite(self.target.covariance).all()):
+                raise np.linalg.LinAlgError('Non-finite BoT-SORT state')
+            return accepted
+        except np.linalg.LinAlgError as exc:
+            # A partial engine update cannot be reused or retried as a fresh detection.
+            previous_id=self.target_id;count=self.numerical_recoveries+1
+            self.reset();self.numerical_recoveries=count
+            self.last_result_id,self.last_result_time=frame_id,source_time
+            self.acquisition_attempted=True;self.association_reason='numerical_reset_waiting_measurements'
+            self.numerical_event=dict(reason=str(exc),previous_target_id=previous_id,
+                frame_id=frame_id,source_time=source_time,recoveries=count,action='discard_state_reacquire')
+            return False
+
+    def _update(self,detections,source_time,now,frame_id,start_confidence=.45,
+               strong_confidence=.25,continuation_confidence=.10,image=None):
         self.accepted=None;self.identity_event=None;self.candidate_pending=False;self.candidate_details=[];self.candidate_rejections=[]
         if not all(math.isfinite(t) for t in (source_time,now)) or source_time>now:
             self.association_reason='invalid_timestamp';return False
@@ -318,6 +339,7 @@ class BoTSORTTracker:
 
     def diagnostics(self):
         return dict(backend=self.backend,target_id=self.target_id,logical_target_id=self.logical_target_id,reid=False,
+                    numerical_recoveries=self.numerical_recoveries,numerical_event=self.numerical_event,
                     acquisition_state='confirmed' if self.confirmed else 'verifying' if self.acquisition else 'reacquiring' if self.acquisition_attempted else 'waiting',
                     acquisition_strong_hits=self.hits if not self.confirmed else 0,
                     motion_estimator='botsort_only',association_reason=self.association_reason,

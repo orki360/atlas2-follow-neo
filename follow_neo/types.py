@@ -90,7 +90,7 @@ class Settings:
             raise ValueError('search_auto_duration must be a boolean')
         bounds = {'confidence':(.05,.95), 'nms_iou':(.05,.95),
                   'new_track_confidence':(.05,.99), 'inference_fps':(1,60), 'video_fps':(1,60),
-                  'edge_search_seconds':(2,10), 'search_yaw_degrees':(0,180),
+                  'edge_search_seconds':(2,10), 'search_yaw_degrees':(0,360),
                   'search_grace_seconds':(.30,1.),
                   'stale_seconds':(.1,2), 'reacquire_seconds':(.65,5),
                   'stop_width':(.01,.50), 'yaw_limit':(.1,1),
