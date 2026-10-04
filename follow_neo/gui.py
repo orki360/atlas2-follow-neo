@@ -27,7 +27,7 @@ from .approach import forward_status_text
 
 # Windows keeps these virtual-key codes stable even when the active keyboard
 # layout produces Hebrew characters. Tk's keysym changes with the layout.
-WINDOWS_PHYSICAL_KEYS={37:'left',38:'up',39:'right',40:'down',65:'a',68:'d',69:'e',70:'f',81:'q',82:'r',83:'s',87:'w',88:'x'}
+WINDOWS_PHYSICAL_KEYS={37:'left',38:'up',39:'right',40:'down',65:'a',68:'d',69:'e',70:'f',73:'i',75:'k',81:'q',82:'r',83:'s',87:'w',88:'x'}
 
 
 def physical_movement_keys(keys):
@@ -35,7 +35,7 @@ def physical_movement_keys(keys):
     import ctypes
     get_state=ctypes.windll.user32.GetAsyncKeyState
     return {key for code,key in WINDOWS_PHYSICAL_KEYS.items()
-            if key in keys and key in MOVEMENT_KEYS and get_state(code)&0x8000}
+            if key in keys and get_state(code)&0x8000}
 
 
 def normalized_event_key(event,platform=None):
@@ -64,6 +64,9 @@ def safe_focus_widget(root):
 class FollowLabWindow:
     def __init__(self,root,base):
         self.root=root; self.base=Path(base); self.session=None; self.stopping=False
+        self.room_mapping=None
+        self.gimbal_keyboard=None; self.gimbal_receiver=None
+        self.gimbal_held=set()
         self.manual=None; self.pressed=set(); self.key_releases={}
         self.key_state_reader=physical_movement_keys if sys.platform=='win32' else None
         self.dance_rejection=''; self.last_control_indicator=None
@@ -75,6 +78,7 @@ class FollowLabWindow:
         if self.config_path.exists():
             try: cfg=json.loads(self.config_path.read_text(encoding='utf-8'))
             except (OSError,ValueError): pass
+        self.room_calibration_path=cfg.get('room_calibration_path','')
         self.root.title(f'ATLAS2 Follow NEO | Version {__version__} / {__revision__} - BoT-SORT')
         self.root.geometry('1440x880'); self.root.minsize(1200,760)
         self.root.configure(bg='#101820')
@@ -139,6 +143,11 @@ class FollowLabWindow:
         ttk.Button(manual_bar,text='Land (R)',command=lambda:self.manual_action('land')).pack(side='left',padx=4)
         self.dance_button=ttk.Button(manual_bar,text='START DANCE',command=self.toggle_dance)
         self.dance_button.pack(side='left',padx=8)
+        self.gimbal_enabled=tk.BooleanVar(value=False)
+        self.gimbal_toggle=ttk.Checkbutton(manual_bar,text='Gimbal keys I / K',
+            variable=self.gimbal_enabled,command=self.toggle_gimbal_keyboard)
+        self.gimbal_toggle.pack(side='left',padx=6)
+        self.gimbal_status=tk.StringVar(value='Camera pitch: disabled | I: up, K: down; one 3-degree step per press')
         self.manual_status=tk.StringVar(value='Keyboard disconnected | Start Control Server on phone')
         ttk.Label(root,textvariable=self.manual_status,padding=(12,2),foreground='#6ad5cb').pack(fill='x')
         self.dance_status=tk.StringVar(value='Dance off | Take off manually, enable control, then Start NEO Dance')
@@ -160,6 +169,8 @@ class FollowLabWindow:
         ttk.Label(viewbar,text='Display').pack(side='left')
         self.view=tk.StringVar(value='Analyzed frame')
         ttk.Combobox(viewbar,textvariable=self.view,values=['Analyzed frame','Live prediction'],state='readonly',width=19).pack(side='left',padx=8)
+        self.room_map_button=ttk.Button(viewbar,text='3D Room Mapping',command=self.open_room_mapping)
+        self.room_map_button.pack(side='left',padx=4)
         capture=ttk.Frame(viewbar); capture.pack(side='right')
         self.capture_mode=tk.StringVar(value='Snapshot')
         ttk.Combobox(capture,textvariable=self.capture_mode,values=['Snapshot','Clean video','Prediction video','Both videos'],
@@ -175,6 +186,11 @@ class FollowLabWindow:
                                 fill='#93a9ba',font=('Segoe UI',15),justify='center',tags='hint')
         self.video_stats=tk.StringVar(value='Waiting for live video')
         ttk.Label(left,textvariable=self.video_stats,wraplength=950,padding=8).pack(fill='x')
+        from .mapping_guidance_panel import MappingGuidancePanel, KEYBOARD_LEGEND
+        self.mapping_advice=MappingGuidancePanel(left,compact=True)
+        self.mapping_advice.pack(fill='x',pady=(0,4))
+        ttk.Label(left,text=KEYBOARD_LEGEND,wraplength=950,foreground='#90a8b9').pack(fill='x')
+        ttk.Label(left,textvariable=self.gimbal_status,wraplength=950,foreground='#6ad5cb').pack(fill='x')
 
         sidebar=ttk.Frame(body); sidebar.grid(row=0,column=1,sticky='nsew')
         self.tabs=ttk.Notebook(sidebar,width=410);self.tabs.pack(fill='both',expand=True)
@@ -306,7 +322,8 @@ class FollowLabWindow:
     def save_config(self):
         data={'schema_version':6,'model_name':self.model.get(),'recording_profile':self.recording_profile.get(),'phone_ip':self.ip.get().strip(),'codec':self.codec.get(),
               'compute':self.compute.get(),'gpu_adapter':self.device.get(),'settings':asdict(self.settings),
-              'axis_limits':self.current_axis_limits()}
+              'axis_limits':self.current_axis_limits(),
+              'room_calibration_path':getattr(self,'room_calibration_path','')}
         tmp=self.config_path.with_suffix('.tmp')
         tmp.write_text(json.dumps(data,indent=2),encoding='utf-8'); tmp.replace(self.config_path)
 
@@ -329,6 +346,9 @@ class FollowLabWindow:
             messagebox.showerror('Cannot start',str(exc))
 
     def disconnect(self,closing=False):
+        self.disable_gimbal_keyboard()
+        mapping=getattr(self,'room_mapping',None)
+        if mapping is not None: mapping.video_disconnected()
         self.stop_manual()
         if self.stopping: return
         if self.manual and self.manual.thread.is_alive():
@@ -352,6 +372,15 @@ class FollowLabWindow:
         self.root.after(50,finished)
 
     def close(self):
+        self.disable_gimbal_keyboard()
+        mapping=getattr(self,'room_mapping',None)
+        if mapping is not None:
+            self.stop_manual()
+            def mapping_closed():
+                self.room_mapping=None
+                self.close()
+            mapping.request_close(mapping_closed)
+            return
         self.closing=True
         pending=getattr(self,'focus_check_id',None)
         if pending:
@@ -368,6 +397,83 @@ class FollowLabWindow:
             else:
                 self.disconnect(closing=True)
         finish()
+
+    def open_room_mapping(self):
+        if self.room_mapping is None:
+            from .room_mapping_window import RoomMappingWindow
+            def calibration_changed(path):
+                self.room_calibration_path=path
+                self.save_config()
+            self.room_mapping=RoomMappingWindow(self.root,self.base,
+                lambda:self.session.receiver if self.session and not self.stopping else None,
+                calibration_path=self.room_calibration_path,
+                on_calibration_changed=calibration_changed,
+                on_focus_video=self.focus_pilot_video)
+        self.room_mapping.show()
+
+    def focus_pilot_video(self):
+        self.root.lift()
+        self.canvas.focus_set()
+
+    def disable_gimbal_keyboard(self):
+        control=getattr(self,'gimbal_keyboard',None)
+        if control is not None: control.disable()
+        enabled=getattr(self,'gimbal_enabled',None)
+        if enabled is not None: enabled.set(False)
+
+    def toggle_gimbal_keyboard(self):
+        if not self.gimbal_enabled.get():
+            self.disable_gimbal_keyboard()
+            return
+        session=self.session
+        if (not session or self.stopping or self.dance_selected
+                or (self.manual and self.manual.mode != 'MANUAL')):
+            self.disable_gimbal_keyboard()
+            self.gimbal_status.set('Camera pitch unavailable: connect existing video and use manual mode, with Dance off.')
+            return
+        from .gimbal_keyboard import GimbalKeyboard
+        # Enabling does not turn an already-held key into a new pitch step.
+        reader=getattr(self,'key_state_reader',None)
+        if reader is not None:
+            try:self.gimbal_held.update(reader({'i','k'}))
+            except (OSError,AttributeError):
+                self.disable_gimbal_keyboard()
+                self.gimbal_status.set('Gimbal disabled: keyboard state unavailable.')
+                return
+        if self.gimbal_receiver is not session.heading:
+            if self.gimbal_keyboard is not None: self.gimbal_keyboard.stop()
+            self.gimbal_receiver=session.heading
+            self.gimbal_keyboard=GimbalKeyboard(session.heading,on_event=self.log_control)
+        if not self.gimbal_keyboard.set_enabled(True):
+            self.gimbal_enabled.set(False)
+        self.gimbal_status.set(self.gimbal_keyboard.read()['status'])
+        self.canvas.focus_set()
+
+    def gimbal_key_step(self, direction):
+        control=getattr(self,'gimbal_keyboard',None)
+        session=getattr(self,'session',None)
+        if (control is None or not session or getattr(self,'stopping',False)
+                or getattr(self,'dance_selected',False)
+                or (getattr(self,'manual',None) and self.manual.mode != 'MANUAL')
+                or getattr(self,'gimbal_receiver',None) is not session.heading):
+            if hasattr(self,'gimbal_status'):
+                self.gimbal_status.set('Enable Gimbal keys I / K while connected in manual mode.')
+            return
+        control.request_step(direction)
+        self.gimbal_status.set(control.read()['status'])
+
+    def refresh_mapping_advice(self):
+        panel=getattr(self,'mapping_advice',None)
+        if panel is None:return
+        mapping=getattr(self,'room_mapping',None)
+        status,view,_=mapping.controller.read() if mapping else ({'state':'idle','mode':'live'},None,0)
+        status['calibration_selected']=bool(self.room_calibration_path)
+        panel.set_status(status,view)
+        control=getattr(self,'gimbal_keyboard',None)
+        if control is not None:
+            state=control.read()
+            self.gimbal_enabled.set(bool(state['enabled']))
+            self.gimbal_status.set(state['status'])
 
     def toggle_manual(self):
         if self.manual and self.manual.thread.is_alive():
@@ -396,6 +502,7 @@ class FollowLabWindow:
         return dict(active=False,mode='MANUAL',reason='Control disconnected')
 
     def start_search_test(self,*,boost=False):
+        self.disable_gimbal_keyboard()
         try:
             if not self.session or self.stopping or not self.manual or self.manual.host!=self.session.receiver.host:
                 raise ValueError('Connect video/telemetry and control to the same phone first')
@@ -413,6 +520,7 @@ class FollowLabWindow:
         self.canvas.focus_set()
 
     def toggle_dance(self):
+        self.disable_gimbal_keyboard()
         self.dance_rejection=''
         self.dance_selected=not self.dance_selected
         self.dance_terminal_seen=False
@@ -512,6 +620,7 @@ class FollowLabWindow:
             self.canvas.focus_set()
 
     def release_manual(self):
+        self.disable_gimbal_keyboard()
         self.clear_keyboard_input('control_release')
         if self.manual: self.manual.release()
 
@@ -538,13 +647,17 @@ class FollowLabWindow:
     def reconcile_keyboard(self):
         reader=getattr(self,'key_state_reader',None)
         held=self.pressed & MOVEMENT_KEYS
-        if not held or reader is None:return
-        try:actual=reader(held)
+        gimbal_held=getattr(self,'gimbal_held',set())
+        if not (held or gimbal_held) or reader is None:return
+        try:actual=reader(held | gimbal_held)
         except (OSError,AttributeError):
+            self.disable_gimbal_keyboard()
             self.clear_keyboard_input('keyboard_state_unavailable')
             if self.manual:self.manual.pause_control('Keyboard state unavailable')
             self.notice.set('Keyboard state unavailable. Connection kept; movement paused.')
             return
+        self.pressed.difference_update(gimbal_held-actual)
+        gimbal_held.intersection_update(actual)
         released=held-actual
         if released:
             self.pressed.difference_update(released)
@@ -561,6 +674,12 @@ class FollowLabWindow:
         if pending: self.root.after_cancel(pending)
         if key in self.pressed: return 'break'
         self.pressed.add(key)
+        if key in ('i','k'):
+            if not hasattr(self,'gimbal_held'):self.gimbal_held=set()
+            if key in self.gimbal_held:return 'break'
+            self.gimbal_held.add(key)
+            self.gimbal_key_step(1 if key=='i' else -1)
+            return 'break'
         if key in MOVEMENT_KEYS:self.log_control('keyboard_press',{'key':key})
         if key in MOVEMENT_KEYS and self.manual:
             self.manual.update(self.pressed & MOVEMENT_KEYS)
@@ -575,6 +694,7 @@ class FollowLabWindow:
         key=normalized_event_key(event)
         def released():
             self.key_releases.pop(key,None); self.pressed.discard(key)
+            getattr(self,'gimbal_held',set()).discard(key)
             if self.manual: self.manual.update(self.pressed & MOVEMENT_KEYS)
         pending=self.key_releases.pop(key,None)
         if pending: self.root.after_cancel(pending)
@@ -609,6 +729,7 @@ class FollowLabWindow:
             if self.manual and self.manual.wanted:
                 self.log_control('control_focus_pause',{'reason':'window_or_settings_focus'})
                 self.manual.pause_control('Window or settings focus lost')
+            self.disable_gimbal_keyboard()
             self.clear_keyboard_input('focus_lost')
         if getattr(self,'closing',False): return
         pending=getattr(self,'focus_check_id',None)
@@ -749,6 +870,7 @@ class FollowLabWindow:
             size='--' if frame is None else f'{frame.image.shape[1]}x{frame.image.shape[0]}'
             self.video_stats.set(f'{size} | Input {source_fps:.1f} FPS | Processed video {video_fps:.1f} FPS | YOLO {inference_fps:.1f} FPS | Decode age {decode_age} | Unanalyzed selected frames {s.inference_skips}')
         self.show_control_indicator()
+        self.refresh_mapping_advice()
         diagram=getattr(self,'state_diagram',None)
         if diagram is not None:
             diagram.update_state(diagram_decision,self.control_snapshot(),self.dance_selected,

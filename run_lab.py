@@ -40,10 +40,24 @@ def check(mode='Auto', device_id=-1, model_name=None):
 def main():
     ap=argparse.ArgumentParser(description='ATLAS2 Follow NEO: live video and perception preview only.')
     ap.add_argument('--check',action='store_true')
+    ap.add_argument('--check-room-mapping',action='store_true',
+                    help='Run a hidden GUI / synthetic autonomous survey check without network connections')
+    ap.add_argument('--check-room-mapping-pipeline',action='store_true',
+                    help='Check the actual SLAM/controller pipeline using rendered images, without GUI or sockets')
     ap.add_argument('--compute',choices=['Auto','GPU','CPU'],default='Auto')
     ap.add_argument('--device-id',type=int,default=-1)
     ap.add_argument('--model',choices=['best.onnx','yolo26s_seg_best_v1.onnx'])
     args=ap.parse_args()
+    if args.check_room_mapping_pipeline:
+        from follow_neo.room_mapping_pipeline_check import run_check
+        report=run_check(ROOT)
+        print(json.dumps(report,indent=2))
+        if not report['success']:
+            raise RuntimeError('Offline mapping pipeline check failed: '+report['output'])
+        return
+    if args.check_room_mapping:
+        from follow_neo.room_mapping_check import run_check
+        print(json.dumps(run_check(ROOT),indent=2));return
     if args.check: check(args.compute,args.device_id,args.model);return
     import tkinter as tk
     from follow_neo.gui import FollowLabWindow

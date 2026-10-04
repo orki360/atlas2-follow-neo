@@ -21,3 +21,6 @@ back_up_vers/
 
 # Local pre-update snapshots
 backups/
+
+# Generated mapping logs, captures, test outputs and local experiment files
+outputs/
