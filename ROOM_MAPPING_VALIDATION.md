@@ -1,5 +1,38 @@
 # 3D room mapping validation — 2026-10-03
 
+## Explicit loop control and cached decisions — 2026-10-05
+
+GUI implementation commit `6a7139bc6b8f742ada60256af9ec4e7e656da46a`
+adds an unchecked experimental loop option, a cumulative accepted-loop label,
+and sampled decision counters in the existing JSONL log. The original
+`start_live(receiver, calibration_path)` API remains loop-disabled. An explicit
+request rejects an engine without loop configuration/status support.
+
+The real engine and a fake existing receiver exercised controller startup,
+frame ingestion, stop/save and logging. The checkbox-to-window-to-controller
+path was tested in a hidden Tk panel. There were 53 distinct application tests
+and 11 subtests across the focused runs. Nine Tk tests initially skipped in
+the sandbox because Tcl initialization was unavailable; isolated guarded
+processes outside the sandbox covered them, including one fresh-process retry.
+Windows path-length failures in test fixtures were resolved by short temporary
+test directories. No full control application or hardware was started.
+
+Engine commit `1ac140a5a3bbb73b52659fa7b25fb79712344e18` passed 24 session
+tests. A real synthetic loop reaches the cached status; later rejected/no-loop
+frames do not erase its accepted count. Older manually checked keyframes do
+not borrow the next frame's source identity/decode time. GUI polling does not
+wait for the map lock during expensive loop work.
+
+The recorded-input harness also passed all six tests with this updated
+controller: exact drop accounting, source order, saved artifacts, baseline
+compatibility and logged candidate flags. Its candidate config shim remains a
+real SLAMConfig subclass so controller capability inspection stays valid.
+
+These are component and transport-boundary tests, not evidence of live-drone
+mapping or a complete 30Hz replay. Full-sequence engine results, tracking loss
+and mixed accuracy are documented separately in the engine's
+`docs/benchmarks/loop_closure_local_20261005_he.md`.
+
 ## עדכון candidate17 — האצה מאומתת, עדיין יש כשל מעקב
 
 המנוע המותקן כולל התאמת תיאורים ובחירת מאפיינים מהירות יותר, ללא שינוי
