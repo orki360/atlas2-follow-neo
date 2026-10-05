@@ -1,5 +1,25 @@
 # 3D room mapping validation — 2026-10-03
 
+## Conservative PnP candidate — 2026-10-05
+
+Engine `68b52d69f6703ba03dbea2c412c93922d9c17901` passed 1,000 tests
+with 5 Windows symlink-privilege skips. The suite used the clean frozen GUI
+`f30ee8854a6246270e9a00c8223d20298ddc2166`; this update changes documentation
+only. All four ICL living-room trajectories completed every-image processing
+without post-initialization LOST using the native GUI configuration (1800
+features, loops ON, automatic maintenance OFF). Drift remains and no loop
+correction was accepted in that profile. A separate recorded loop-owner event
+accepted 24 geometric matches and 16 fusions while preserving 13,248 observations.
+
+The 30 Hz controller replay still loses tracking and drops many images; successful
+every-image processing is not live validation. The engine report preserves the
+full four-sequence offline and paced results, source/configuration identities,
+negative experiments, and remaining limitations:
+[candidate report](https://github.com/orki360/RBD-SLAM-Python/blob/codex/verified-loop-closure/docs/benchmarks/native_primary_rescue_20261005_he.md).
+The shared-evidence tracking gate from engine `1e04b0e` was rejected and removed
+after it regressed native-profile kt1. The experimental loop option remains
+unchecked by default. No flight/control application or hardware was started.
+
 ## Explicit loop control and cached decisions — 2026-10-05
 
 GUI implementation commit `6a7139bc6b8f742ada60256af9ec4e7e656da46a`
