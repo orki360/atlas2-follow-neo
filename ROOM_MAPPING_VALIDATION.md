@@ -23,14 +23,37 @@ frames do not erase its accepted count. Older manually checked keyframes do
 not borrow the next frame's source identity/decode time. GUI polling does not
 wait for the map lock during expensive loop work.
 
-The recorded-input harness also passed all six tests with this updated
-controller: exact drop accounting, source order, saved artifacts, baseline
-compatibility and logged candidate flags. Its candidate config shim remains a
-real SLAMConfig subclass so controller capability inspection stays valid.
+The recorded-input harness passed eight focused tests at engine/harness
+`acf8b73305ea539ef8b055803a86af8847c59946`: exact drop accounting, source order,
+saved artifacts, baseline compatibility, logged flags, the native GUI loop
+option and distinct frame IDs with identical local decode timestamps. The
+observer uses MappingSession's processing source ID; decode time is preserved
+as timing evidence instead of incorrectly serving as a unique key.
 
-These are component and transport-boundary tests, not evidence of live-drone
-mapping or a complete 30Hz replay. Full-sequence engine results, tracking loss
-and mixed accuracy are documented separately in the engine's
+Eight recorded 30Hz replays completed using frozen GUI `828a7df` and baseline
+engine `d66e18f` versus candidate `acf8b73`. All published schedules stayed
+within the 100 ms feeder lateness budget and drop accounting balanced. The
+candidate used the actual unchecked-by-default GUI option explicitly enabled:
+1800 features, loops on, automatic map maintenance off. This differs from the
+engine's 1200-feature offline comparison with both capabilities enabled.
+
+| Sequence | Input | Processed | Fresh poses | LOST | Stale | Last valid source | Accepted loops |
+|:--|--:|--:|--:|--:|--:|--:|--:|
+| kt0 | 1509 | 361 | 347 | 0 | 4 | 1508 | 0 |
+| kt1 | 966 | 262 | 34 | 217 | 0 | 188 | 0 |
+| kt2 | 881 | 135 | 131 | 0 | 0 | 880 | 0 |
+| kt3 | 1241 | 208 | 147 | 56 | 0 | 1240 | 0 |
+
+Thus clean lifecycle completion does not establish stable tracking. A separate
+kt1 replay with every image and the exact native GUI configuration retained
+882 poses from 84 through 965 with no LOST, but its global fitted ATE was 0.11512 m
+and prefix-fitted later RMSE 0.44624 m. Dropping images changes the tracking path;
+the successful all-image run is not a live performance claim. All sources are
+synthetic ICL living-room RGB with known benchmark calibration, not DJI footage.
+Network/transport construction stayed blocked in the controller replays.
+
+Full source/config manifests, mixed accuracy and remaining limits are in
+the engine's
 `docs/benchmarks/loop_closure_local_20261005_he.md`.
 
 ## עדכון candidate17 — האצה מאומתת, עדיין יש כשל מעקב
