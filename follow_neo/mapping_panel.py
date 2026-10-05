@@ -264,6 +264,13 @@ class MappingPanel(ttk.Frame):
         self.estimate_calibration_button = ttk.Button(calibration,text='Estimate Mini 4 Pro',
                                                       command=on_estimate_calibration)
         self.estimate_calibration_button.grid(row=0,column=3,padx=(6,0))
+        self.loop_closure_enabled = tk.BooleanVar(value=False)
+        self.loop_closure_check = ttk.Checkbutton(calibration,
+            text='Loop closure (experimental)', variable=self.loop_closure_enabled)
+        self.loop_closure_check.grid(row=1,column=0,sticky='w',pady=(6,0))
+        ttk.Label(calibration,
+            text='May pause mapping for several seconds and skip incoming frames.',
+            foreground=AMBER).grid(row=1,column=1,columnspan=3,sticky='w',pady=(6,0))
 
         self.mode_badge = tk.Label(self,text='LIVE SPARSE MAP  |  Arbitrary monocular units',
                                   bg='#164d49',fg=TEXT,font=('Segoe UI',11,'bold'),anchor='w',padx=10,pady=6)
@@ -307,7 +314,8 @@ class MappingPanel(ttk.Frame):
         """Disable starts/calibration while a run is active; Stop stays usable."""
         state = 'disabled' if busy else 'normal'
         for button in (self.start_live_button,self.start_simulation_button,
-                       self.choose_calibration_button,self.calibrate_button,self.estimate_calibration_button):
+                       self.choose_calibration_button,self.calibrate_button,self.estimate_calibration_button,
+                       self.loop_closure_check):
             button.configure(state=state)
 
     def _set_mode(self, source):
@@ -338,6 +346,12 @@ class MappingPanel(ttk.Frame):
                   f"Points: {status.get('landmarks',0)}",
                   f"Keyframes: {status.get('keyframes',0)}",
                   'Pose valid' if status.get('pose_valid') else 'Pose unavailable']
+        if status.get('mode') == 'live':
+            loop = status.get('loop_closure') or {}
+            if loop.get('enabled'):
+                fields.append(f"Loops accepted (total): {loop.get('accepted', 0)} (experimental)")
+            else:
+                fields.append('Loop closure: off')
         if status.get('calibration_kind'):
             fields.append('Run calibration: ' + str(status['calibration_kind']).upper())
         coverage = status.get('coverage')
