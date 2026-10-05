@@ -1,5 +1,81 @@
 # 3D room mapping validation — 2026-10-03
 
+## Conservative PnP candidate — 2026-10-05
+
+Engine `68b52d69f6703ba03dbea2c412c93922d9c17901` passed 1,000 tests
+with 5 Windows symlink-privilege skips. The suite used the clean frozen GUI
+`f30ee8854a6246270e9a00c8223d20298ddc2166`; this update changes documentation
+only. All four ICL living-room trajectories completed every-image processing
+without post-initialization LOST using the native GUI configuration (1800
+features, loops ON, automatic maintenance OFF). Drift remains and no loop
+correction was accepted in that profile. A separate recorded loop-owner event
+accepted 24 geometric matches and 16 fusions while preserving 13,248 observations.
+
+The 30 Hz controller replay still loses tracking and drops many images; successful
+every-image processing is not live validation. The engine report preserves the
+full four-sequence offline and paced results, source/configuration identities,
+negative experiments, and remaining limitations:
+[candidate report](https://github.com/orki360/RBD-SLAM-Python/blob/codex/verified-loop-closure/docs/benchmarks/native_primary_rescue_20261005_he.md).
+The shared-evidence tracking gate from engine `1e04b0e` was rejected and removed
+after it regressed native-profile kt1. The experimental loop option remains
+unchecked by default. No flight/control application or hardware was started.
+
+## Explicit loop control and cached decisions — 2026-10-05
+
+GUI implementation commit `6a7139bc6b8f742ada60256af9ec4e7e656da46a`
+adds an unchecked experimental loop option, a cumulative accepted-loop label,
+and sampled decision counters in the existing JSONL log. The original
+`start_live(receiver, calibration_path)` API remains loop-disabled. An explicit
+request rejects an engine without loop configuration/status support.
+
+The real engine and a fake existing receiver exercised controller startup,
+frame ingestion, stop/save and logging. The checkbox-to-window-to-controller
+path was tested in a hidden Tk panel. There were 53 distinct application tests
+and 11 subtests across the focused runs. Nine Tk tests initially skipped in
+the sandbox because Tcl initialization was unavailable; isolated guarded
+processes outside the sandbox covered them, including one fresh-process retry.
+Windows path-length failures in test fixtures were resolved by short temporary
+test directories. No full control application or hardware was started.
+
+Engine commit `1ac140a5a3bbb73b52659fa7b25fb79712344e18` passed 24 session
+tests. A real synthetic loop reaches the cached status; later rejected/no-loop
+frames do not erase its accepted count. Older manually checked keyframes do
+not borrow the next frame's source identity/decode time. GUI polling does not
+wait for the map lock during expensive loop work.
+
+The recorded-input harness passed eight focused tests at engine/harness
+`acf8b73305ea539ef8b055803a86af8847c59946`: exact drop accounting, source order,
+saved artifacts, baseline compatibility, logged flags, the native GUI loop
+option and distinct frame IDs with identical local decode timestamps. The
+observer uses MappingSession's processing source ID; decode time is preserved
+as timing evidence instead of incorrectly serving as a unique key.
+
+Eight recorded 30Hz replays completed using frozen GUI `828a7df` and baseline
+engine `d66e18f` versus candidate `acf8b73`. All published schedules stayed
+within the 100 ms feeder lateness budget and drop accounting balanced. The
+candidate used the actual unchecked-by-default GUI option explicitly enabled:
+1800 features, loops on, automatic map maintenance off. This differs from the
+engine's 1200-feature offline comparison with both capabilities enabled.
+
+| Sequence | Input | Processed | Fresh poses | LOST | Stale | Last valid source | Accepted loops |
+|:--|--:|--:|--:|--:|--:|--:|--:|
+| kt0 | 1509 | 361 | 347 | 0 | 4 | 1508 | 0 |
+| kt1 | 966 | 262 | 34 | 217 | 0 | 188 | 0 |
+| kt2 | 881 | 135 | 131 | 0 | 0 | 880 | 0 |
+| kt3 | 1241 | 208 | 147 | 56 | 0 | 1240 | 0 |
+
+Thus clean lifecycle completion does not establish stable tracking. A separate
+kt1 replay with every image and the exact native GUI configuration retained
+882 poses from 84 through 965 with no LOST, but its global fitted ATE was 0.11512 m
+and prefix-fitted later RMSE 0.44624 m. Dropping images changes the tracking path;
+the successful all-image run is not a live performance claim. All sources are
+synthetic ICL living-room RGB with known benchmark calibration, not DJI footage.
+Network/transport construction stayed blocked in the controller replays.
+
+Full source/config manifests, mixed accuracy and remaining limits are in
+the engine's
+`docs/benchmarks/loop_closure_local_20261005_he.md`.
+
 ## עדכון candidate17 — האצה מאומתת, עדיין יש כשל מעקב
 
 המנוע המותקן כולל התאמת תיאורים ובחירת מאפיינים מהירות יותר, ללא שינוי

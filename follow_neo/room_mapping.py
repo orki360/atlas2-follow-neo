@@ -7,7 +7,7 @@ camera-to-aircraft transform can be supplied and validated.
 from __future__ import annotations
 
 from datetime import datetime
-from dataclasses import asdict
+from dataclasses import asdict, fields
 import importlib
 import json
 from pathlib import Path
@@ -118,7 +118,10 @@ class RoomMappingController:
                     calibration_label=self.calibration_metadata['label'],
                     calibration_warnings=self.calibration_metadata['warnings'])
 
-    def start_live(self, receiver, calibration_path):
+    def start_live(self, receiver, calibration_path, loop_closure=False):
+        """Attach to existing frames; global loop work is an explicit opt-in."""
+        if not isinstance(loop_closure, bool):
+            raise ValueError('loop_closure must be a boolean.')
         if receiver is None:
             raise ValueError('Connect the existing video first.')
         frame = receiver.frames.get()
@@ -130,10 +133,18 @@ class RoomMappingController:
         if frame.image.shape != (calibration.height, calibration.width, 3):
             raise ValueError('Calibration size does not match the original video frame.')
         session_class = mapping_import('mapping_session').MappingSession
-        config = mapping_import('slam').SLAMConfig(retain_map=True, max_keyframes=400,
-                                                   max_landmarks=20000, max_features=1800,
-                                                   adaptive_keyframes=True,
-                                                   keyframe_redundancy_min_points=100)
+        config_class = mapping_import('slam').SLAMConfig
+        supports_loop = ('loop_closure_enabled' in {field.name for field in fields(config_class)}
+                         and getattr(session_class, 'loop_closure_status_supported', False))
+        if loop_closure and not supports_loop:
+            raise RuntimeError('This RBD-SLAM-Python installation lacks loop-closure status support. '
+                               'Update the engine before enabling experimental loop closure.')
+        options = dict(retain_map=True, max_keyframes=400, max_landmarks=20000,
+                       max_features=1800, adaptive_keyframes=True,
+                       keyframe_redundancy_min_points=100)
+        if 'loop_closure_enabled' in {field.name for field in fields(config_class)}:
+            options['loop_closure_enabled'] = loop_closure
+        config = config_class(**options)
         session = session_class(calibration, config, stale_after=1.0)
         self._begin('live', {
             'calibration': {'path': str(Path(calibration_path).resolve()),
@@ -207,7 +218,8 @@ class RoomMappingController:
                           'diagnostics', 'diagnostics_fresh', 'last_processed_decoded_at',
                           'tracker_frame_id', 'relocalized', 'submitted_frames', 'processed_frames',
                           'rejected_order_frames', 'rejected_state_frames', 'discarded_on_stop',
-                          'discarded_on_error', 'pending_frame_id', 'processing_frame_id'):
+                          'discarded_on_error', 'pending_frame_id', 'processing_frame_id',
+                          'loop_closure'):
                 status[field] = live.get(field)
             status['pose'] = live.get('pose') if pose_valid else None
             status['tracking_message'] = live.get('message', '')
@@ -224,8 +236,10 @@ class RoomMappingController:
             return
         status, view, _ = self.read()
         guidance = build_mapping_guidance(status, view)
+        loop = status.get('loop_closure') or {}
         key = (status.get('state'), status.get('tracking_state'), status.get('pose_valid'),
-               status.get('stale'), status.get('mapping_capacity_reason'), guidance['code'])
+               status.get('stale'), status.get('mapping_capacity_reason'), guidance['code'],
+               loop.get('queries'), loop.get('candidates'), loop.get('accepted'), loop.get('rejected'))
         now = time.monotonic()
         if force or key != self._last_log_key or now - self._last_log_at >= 0.5:
             self.log.write('status_sample', {

@@ -60,7 +60,8 @@ class RoomMappingWindow:
         try:
             if not self.calibration_path:
                 raise ValueError('Choose a camera calibration, use Calibrate from images, or Estimate Mini 4 Pro.')
-            self.controller.start_live(self.receiver_provider(), self.calibration_path)
+            self.controller.start_live(self.receiver_provider(), self.calibration_path,
+                                       loop_closure=bool(self.panel.loop_closure_enabled.get()))
         except Exception as exc:
             messagebox.showerror('Live room mapping', str(exc), parent=self.window)
 
