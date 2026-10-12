@@ -126,7 +126,7 @@ class BoTSORTTracker:
                 elif age<=RECOVERY_SECONDS:return 1.1
         # After a genuine gap the old image location is not a permanent veto:
         # the single-target application may verify a unique strong returning
-        # candidate anywhere in the frame. This requires a longer sequence.
+        # candidate anywhere in the frame using three strong coherent samples.
         if age>=.65 and d.confidence>=self.acquisition_confidence and self.last_detection is not None:
             old=self.last_detection.box
             ratio=np.array([box.width/max(old.width,2),box.height/max(old.height,2)])
@@ -164,7 +164,11 @@ class BoTSORTTracker:
             if old['step'] is not None and np.linalg.norm(step)>scale*.15:
                 coherent=coherent and float(step@old['step'])>=-scale*scale*.1
         if not coherent:old=None
-        samples=[] if old is None else [s for s in old['samples'] if source_time-s[0]<=.6]
+        # Three coherent strong return observations fit the existing 600 ms
+        # evidence window even at 10 FPS; weak frames cannot confirm relocation.
+        evidence_window=.6
+        samples=[] if old is None else [s for s in old['samples'] if source_time-s[0]<=evidence_window]
+        if relocation:strong_confidence=max(strong_confidence,self.acquisition_confidence)
         samples.append((source_time,det.confidence>=strong_confidence))
         self.pending=dict(point=point,width=det.box.width,height=det.box.height,time=source_time,relocation=relocation,
                           since=samples[0][0],hits=len(samples),strong=sum(s[1] for s in samples),samples=samples,
@@ -172,8 +176,8 @@ class BoTSORTTracker:
         p=self.pending;self.candidate_pending=source_time-self.pause_started<=.8
         self.association_reason='candidate_verifying'
         strong=p['strong']>=3
-        needed=8 if relocation else 3 if strong else 4
-        span=.25 if relocation else .06 if strong else .10
+        needed=3 if relocation or strong else 4
+        span=0. if relocation or strong else .10
         if p['hits']<needed or source_time-p['since']<span or relocation and p['strong']<3:return None
         candidate_track=next((t for t in current if np.allclose(t._tlwh,
                       [det.box.x1,det.box.y1,det.box.width,det.box.height],atol=.01)),None)

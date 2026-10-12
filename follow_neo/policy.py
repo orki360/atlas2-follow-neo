@@ -67,7 +67,7 @@ class DeterministicTrackingPolicy:
         self.reason=reason
 
     def update(self,now,k,w,h,measurement_time,measurement_id,command,settings,abort=False,
-               accepted=True,search=None):
+               accepted=True,search=None,verified_recovery=False):
         previous_time=self.last_measurement_time
         if measurement_time is not None and math.isfinite(measurement_time) and measurement_time<=now:
             if previous_time is None or measurement_time>previous_time:self.last_measurement_time=measurement_time
@@ -93,8 +93,9 @@ class DeterministicTrackingPolicy:
                 if new:
                     self.hits+=1
                     if self.reacquire_since is None:self.reacquire_since=measurement_time
-                ready=(self.hits>=3 and self.reacquire_since is not None
-                       and measurement_time-self.reacquire_since>=.06)
+                if verified_recovery:self.hits=max(3,self.hits)
+                ready=(verified_recovery or (self.hits>=3 and self.reacquire_since is not None
+                       and measurement_time-self.reacquire_since>=.06))
                 state='TRACK' if ready else 'REACQUIRE'
                 reason='reacquire_confirmed' if ready else 'reacquire_confirming'
             if state=='TRACK':self.last=command.bounded()

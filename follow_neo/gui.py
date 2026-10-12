@@ -19,6 +19,8 @@ from .types import Settings, settings_from_config
 from .session import FollowSession
 from .overlay import render_bundle
 from .models import DEFAULT_MODEL, MODEL_NAMES
+from .roi import RoiSettings
+from .roi_view import RoiPanel
 from .manual import ManualControl, MOVEMENT_KEYS, AXES, DEFAULT_AXIS_LIMITS
 from .control_status import control_indicator, acknowledged_command_text, target_status_text
 from .state_diagram import LiveStateDiagram
@@ -223,9 +225,18 @@ class FollowLabWindow:
             exact.bind('<FocusOut>',lambda event,selected=axis:self.change_axis_speed(
                 selected,self.axis_entry_vars[selected].get()))
             ttk.Label(row,textvariable=self.axis_limit_labels[axis],width=7).pack(side='left',padx=(3,0))
-        ttk.Label(self.speed_bar,text='Normal caps for tracking / keyboard\nSearch: yaw up to 100%, with braking',foreground='#8cbbb8').pack(anchor='w',pady=3)
+        ttk.Label(self.speed_bar,text='Normal caps for tracking / keyboard\nSearch: SCAN cap below, BOOST up to 100%',foreground='#8cbbb8').pack(anchor='w',pady=3)
         self.forward_status=tk.StringVar(value='Approach: waiting for control data')
         ttk.Label(self.speed_bar,textvariable=self.forward_status,foreground='#8cbbb8',wraplength=290).pack(anchor='w',pady=3)
+        scan_controls=ttk.LabelFrame(controls_page,text='SCAN rotation speed',padding=6)
+        scan_controls.pack(fill='x',pady=8)
+        self.scan_speed_var=tk.StringVar(value=f"{search_values['scan_yaw_limit']*100:g}")
+        self.scan_speed_note=tk.StringVar(value=f"Applied: {search_values['scan_yaw_limit']:.0%}")
+        ttk.Label(scan_controls,text='Yaw cap (%)').grid(row=0,column=0,sticky='w')
+        ttk.Spinbox(scan_controls,from_=0,to=100,increment=5,width=6,
+                    textvariable=self.scan_speed_var).grid(row=0,column=1,padx=6)
+        ttk.Button(scan_controls,text='Apply / אישור',command=self.apply_scan_speed).grid(row=0,column=2)
+        ttk.Label(scan_controls,textvariable=self.scan_speed_note).grid(row=1,column=0,columnspan=3,sticky='w')
         self.search_bar=ttk.LabelFrame(controls_page,text='Search after target loss',padding=8);self.search_bar.pack(fill='x',pady=8)
         for label,key,lo,hi,step in (('Search angle (deg)','search_yaw_degrees',0,360,5),
                                      ('Search time (s)','edge_search_seconds',2,10,.5)):
@@ -291,6 +302,7 @@ class FollowLabWindow:
         self.notice=tk.StringVar(value='Enter the IP shown in MSDKRemote. Start its Video Server first.')
         ttk.Label(root,textvariable=self.notice,wraplength=1250,padding=10,foreground='#d9b56c').pack(side='bottom',fill='x',before=body)
         self.settings=Settings(**self.loaded_values)
+        self.roi_panel=RoiPanel(self,cfg)
         for var in list(self.vars.values())+[self.hold,self.edge_search_on,self.search_auto]: var.trace_add('write',self.mark_dirty)
         self.compute.trace_add('write',lambda *a:self.notice.set('Compute changes take effect on the next Connect.'))
         self.root.after(50,self.refresh)
@@ -306,7 +318,8 @@ class FollowLabWindow:
     def save_config(self):
         data={'schema_version':6,'model_name':self.model.get(),'recording_profile':self.recording_profile.get(),'phone_ip':self.ip.get().strip(),'codec':self.codec.get(),
               'compute':self.compute.get(),'gpu_adapter':self.device.get(),'settings':asdict(self.settings),
-              'axis_limits':self.current_axis_limits()}
+              'axis_limits':self.current_axis_limits(),
+              'roi':asdict(getattr(self,'roi_settings',RoiSettings()))}
         tmp=self.config_path.with_suffix('.tmp')
         tmp.write_text(json.dumps(data,indent=2),encoding='utf-8'); tmp.replace(self.config_path)
 
@@ -317,8 +330,8 @@ class FollowLabWindow:
             # Numeric IP prevents unbounded DNS lookup in the connection worker.
             try: socket.inet_pton(socket.AF_INET,host)
             except OSError: socket.inet_pton(socket.AF_INET6,host)
-            self.settings=self.read_settings(); self.save_config()
-            self.session=FollowSession(self.base,host,self.codec.get(),self.settings,self.record.get(),self.compute.get(),self.device.get(),self.model.get(),self.recording_profile.get())
+            self.settings=self.read_settings(); self.roi_settings=self.roi_panel.read_settings(); self.save_config()
+            self.session=FollowSession(self.base,host,self.codec.get(),self.settings,self.record.get(),self.compute.get(),self.device.get(),self.model.get(),self.recording_profile.get(),roi_settings=self.roi_settings)
             self.session.control_provider=self.control_snapshot
             self.session.start(); self.rates.clear(); self.mark_dirty()
             self.model_picker.configure(state='disabled');self.recording_picker.configure(state='disabled');self.compute_picker.configure(state='disabled'); self.device_picker.configure(state='disabled')
@@ -618,6 +631,22 @@ class FollowLabWindow:
         try: self.focus_check_id=self.root.after_idle(check)
         except tk.TclError: pass
 
+    def apply_scan_speed(self):
+        try:
+            limit=float(self.scan_speed_var.get())/100.
+            updated=replace(self.settings,scan_yaw_limit=limit).validate()
+            previous=self.settings;self.settings=updated
+            try:self.save_config()
+            except Exception:self.settings=previous;raise
+            if self.session:self.session.configure_scan_speed(limit)
+            if self.manual:self.manual.configure_scan_speed(limit)
+            self.scan_speed_var.set(f'{limit*100:g}')
+            self.scan_speed_note.set(f'Applied: {limit:.0%}')
+            self.mark_dirty()
+            self.notice.set(f'SCAN yaw cap saved: {limit:.0%}. Applied to the active scan; 0% holds rotation. BOOST unchanged.')
+            self.canvas.focus_set()
+        except Exception as exc:messagebox.showerror('SCAN rotation speed',str(exc))
+
     def apply_search(self):
         try:
             angle=float(self.search_vars['search_yaw_degrees'].get())
@@ -748,6 +777,8 @@ class FollowLabWindow:
             decode_age='--' if frame is None else f'{(now-frame.decoded_at)*1000:.0f} ms'
             size='--' if frame is None else f'{frame.image.shape[1]}x{frame.image.shape[0]}'
             self.video_stats.set(f'{size} | Input {source_fps:.1f} FPS | Processed video {video_fps:.1f} FPS | YOLO {inference_fps:.1f} FPS | Decode age {decode_age} | Unanalyzed selected frames {s.inference_skips}')
+        roi_panel=getattr(self,'roi_panel',None)
+        if roi_panel is not None:roi_panel.update(s.result.get() if s and not self.stopping else None)
         self.show_control_indicator()
         diagram=getattr(self,'state_diagram',None)
         if diagram is not None:

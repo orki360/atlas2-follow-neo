@@ -32,6 +32,20 @@ class ModelV6Tests(unittest.TestCase):
         self.raw[0, :6, index] = [480, 272, 100, 40, neo, mini]
         self.raw[0, 6:, index] = coefficient
 
+    def test_direct_planes_match_original_preprocessing_for_full_frame_and_crops(self):
+        import cv2
+        rng=np.random.default_rng(17)
+        for h,w in ((1080,1920),(540,960),(700,801),(801,700)):
+            frame=rng.integers(0,256,(h,w,3),dtype=np.uint8)
+            scale=min(960/w,544/h);rw,rh=round(w*scale),round(h*scale)
+            x,y=(960-rw)//2,(544-rh)//2
+            canvas=np.full((544,960,3),114,np.uint8)
+            canvas[y:y+rh,x:x+rw]=cv2.resize(frame,(rw,rh),interpolation=cv2.INTER_LINEAR)
+            original=np.ascontiguousarray(cv2.cvtColor(canvas,cv2.COLOR_BGR2RGB).transpose(2,0,1)[None],dtype=np.float32)/255.
+            actual,transform=self.detector._prepare(frame)
+            np.testing.assert_array_equal(actual,original)
+            self.assertEqual(transform['pad_x'],x);self.assertEqual(transform['pad_y'],y)
+
     def test_rectangular_letterbox_and_rgb(self):
         frame = np.full((1080, 1920, 3), [10, 20, 30], np.uint8)
         tensor, transform = self.detector._prepare(frame)

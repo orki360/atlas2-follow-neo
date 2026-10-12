@@ -128,12 +128,16 @@ class ControllerTests(unittest.TestCase):
         d=self.step(26,[])
         self.assertFalse(d['prediction_forward_allowed'])
 
-    def test_gap_does_not_reset_identity_or_adopt_distant_distractor(self):
+    def test_gap_keeps_identity_and_requires_three_coherent_return_observations(self):
         self.step(1);self.step(2);old=self.c.tracker.target_id
         for i in range(3,35):self.step(i,[])
-        for i in range(35,42):d=self.step(i,[detection(450)])
+        for i in range(35,37):
+            d=self.step(i,[detection(450)])
+            self.assertFalse(d['accepted'])
+        d=self.step(37,[detection(450)])
         self.assertEqual(self.c.tracker.target_id,old)
-        self.assertFalse(d['accepted'])
+        self.assertTrue(d['accepted'])
+        self.assertEqual(d['state'],'TRACK')
         self.assertTrue(d['confirmed'])
 
 

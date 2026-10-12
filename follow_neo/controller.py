@@ -72,10 +72,16 @@ class FollowController:
         if self.tracker_backend=='botsort' and t.numerical_event:
             self.restart_control();self.last_accepted=None
         if accepted: self.last_accepted=t.accepted
+        # The tracker has already verified these distinct observations. Carry
+        # that proof through search and policy instead of collecting them again.
+        recovery_kwargs={}
+        if self.tracker_backend=='botsort':
+            recovery_kwargs['verified_recovery']=bool(accepted and t.confirmed and t.identity_event
+                and t.identity_event.get('strong_observations',0)>=3 and 0<=now-source_time<=.25)
         self.edge_search.observe(accepted,not detections,t.confirmed,
                 t.accepted.box if accepted else None,t.snapshot(source_time),*size,
                 source_time,frame_id,settings,
-                strong=bool(accepted and t.accepted.confidence>=max(settings.confidence,settings.new_track_confidence)))
+                strong=bool(accepted and t.accepted.confidence>=max(settings.confidence,settings.new_track_confidence)),**recovery_kwargs)
         return accepted
 
     def tick(self,now,width,height,video_time,settings,heading=None,control_available=True):
@@ -109,7 +115,9 @@ class FollowController:
                     self.spacing.phase,self.spacing.close,settings,heading,**search_kwargs)
         cmd=self.policy.update(now,k,width,height,mtime if t.confirmed else None,
                     t.measurement_id if t.confirmed else None,raw,settings,
-                    abort=stale,accepted=real_fresh,search=search)
+                    abort=stale,accepted=real_fresh,search=search,
+                    verified_recovery=bool(self.tracker_backend=='botsort' and real_fresh and t.identity_event
+                        and t.identity_event.get('strong_observations',0)>=3))
         box=k.box
         measured_box=None if self.last_accepted is None else self.last_accepted.box
         clipped=measured_box is not None and (measured_box.x1<=.02*width or measured_box.y1<=.02*height

@@ -119,7 +119,7 @@ class DebugContracts(unittest.TestCase):
         c.stop();c.thread.join(1)
         self.assertFalse(c.wanted);self.assertFalse(c.enabled)
         self.assertTrue(any(e=='search_test_summary' and not d['tail_complete'] for e,d in events))
-    def test_dance_scan_uses_full_scale_then_manual_override_obeys_slider(self):
+    def test_dance_scan_caps_at_half_scale_then_manual_override_obeys_slider(self):
         peer=Server();r=RecoverySearch();s=Settings(search_yaw_degrees=180)
         def decision():
             now=time.monotonic()
@@ -131,7 +131,7 @@ class DebugContracts(unittest.TestCase):
         self.addCleanup(lambda:(c.stop(),c.thread.join(3)))
         c.set_axis_limits(dict(yaw=.02,vertical=1.,roll=1.,forward=1.))
         c.start_dance();c.update(set());c.enable();c.start()
-        wait_for(lambda:(c.update(set()) or 'rc 1.0000 0.0000 0.0000 0.0000' in peer.commands))
+        wait_for(lambda:(c.update(set()) or 'rc 0.5000 0.0000 0.0000 0.0000' in peer.commands))
         c.update({'a'});wait_for(lambda:'rc -0.0200 0.0000 0.0000 0.0000' in peer.commands)
 
     def test_measured_wraparound_and_post_stop_drift_are_logged(self):
@@ -153,20 +153,20 @@ class DebugContracts(unittest.TestCase):
         control.enabled=control.wanted=True
         with self.assertRaises(ValueError):control.start_search_test(Settings(),lambda:heading(time.monotonic()-1),'RIGHT')
         self.assertEqual(control.mode,'MANUAL')
-    def test_real_control_worker_sends_yaw_only_full_scale_and_stop_zero(self):
+    def test_real_control_worker_sends_yaw_only_half_scale_and_stop_zero(self):
         peer=Server();events=[]
         c=ManualControl('127.0.0.1',peer.connect,on_event=lambda e,d:events.append((e,d)))
         self.addCleanup(lambda:(c.stop(),c.thread.join(3)))
         c.set_axis_limits(dict(yaw=.01,vertical=1.,roll=1.,forward=1.))
         c.update(set());c.enable();c.start();wait_for(lambda:c.enabled)
         c.start_search_test(Settings(search_yaw_degrees=180),lambda:heading(time.monotonic()),'RIGHT')
-        wait_for(lambda:(c.update(set()) or 'rc 1.0000 0.0000 0.0000 0.0000' in peer.commands))
+        wait_for(lambda:(c.update(set()) or 'rc 0.5000 0.0000 0.0000 0.0000' in peer.commands))
         c.stop_search_test();index=len(peer.commands)
         wait_for(lambda:any(x=='rc 0.0000 0.0000 0.0000 0.0000' for x in peer.commands[index:]))
         self.assertEqual(c.mode,'MANUAL')
         commands=[d for e,d in events if e=='flight_command' and d['mode']=='SEARCH_TEST']
         self.assertTrue(commands)
-        self.assertTrue(all(d['values'][1:]==[0,0,0] and d['search_yaw_override'] for d in commands))
+        self.assertTrue(all(abs(d['values'][0])<=.5 and d['values'][1:]==[0,0,0] and d['search_yaw_override'] for d in commands))
     def test_dedicated_log_contains_heading_command_ack_and_summary(self):
         with tempfile.TemporaryDirectory() as tmp:
             session=FollowSession.__new__(FollowSession);session.log=Mock();session.output=Path(tmp)

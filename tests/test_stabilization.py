@@ -87,7 +87,9 @@ class CandidateTests(unittest.TestCase):
     def test_broad_recovery_accepts_coherent_mixed_confidence(self):
         self.feed([],dt=1.)
         accepted=False
-        for confidence in [.95,.95,.2,.95,.2,.95,.2,.95]:accepted=self.feed([detection(490,confidence)])
+        for confidence in [.95,.95,.2]:
+            self.assertFalse(self.feed([detection(490,confidence)]))
+        accepted=self.feed([detection(490,.95)])
         self.assertTrue(accepted);self.assertEqual(self.tracker.association_reason,'verified_returning_target')
     def test_pause_budget_is_not_renewed_by_new_candidates(self):
         self.feed([detection(255,.2)])

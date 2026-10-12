@@ -168,14 +168,17 @@ class OnnxDroneDetector:
         scale = min(target_w / source_w, target_h / source_h)
         resized_w = max(1, int(round(source_w * scale)))
         resized_h = max(1, int(round(source_h * scale)))
-        resized = cv2.resize(frame, (resized_w, resized_h), interpolation=cv2.INTER_LINEAR)
+        resized = (frame if (resized_w, resized_h) == (source_w, source_h)
+                   else cv2.resize(frame, (resized_w, resized_h), interpolation=cv2.INTER_LINEAR))
         pad_x = (target_w - resized_w) // 2
         pad_y = (target_h - resized_h) // 2
-        canvas = np.full((target_h, target_w, 3), 114, dtype=np.uint8)
-        canvas[pad_y : pad_y + resized_h, pad_x : pad_x + resized_w] = resized
-        rgb = cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB)
-        tensor = np.ascontiguousarray(rgb.transpose(2, 0, 1)[None], dtype=np.float32)
-        tensor /= 255.0
+        # Write normalized RGB planes directly: no padded uint8 canvas or RGB
+        # intermediate copy. ROI frames of the target size need no resize.
+        tensor = np.full((1, 3, target_h, target_w), 114.0 / 255.0, dtype=np.float32)
+        for channel in range(3):
+            np.divide(resized[:, :, 2-channel], 255.0,
+                      out=tensor[0, channel, pad_y:pad_y+resized_h, pad_x:pad_x+resized_w],
+                      dtype=np.float32)
         return tensor, {
             "scale": float(scale),
             "pad_x": float(pad_x),

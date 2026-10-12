@@ -8,6 +8,10 @@ from .prediction import COAST_SECONDS, project_center
 
 BLUE=(255,100,20)  # OpenCV BGR: blue, shared by preview and saved video.
 RED=(0,0,255)
+YELLOW=(0,255,255)
+PURPLE=(255,80,180)
+ROI_NEO=(220,220,0)  # BGR: turquoise
+ROI_MINI=(0,140,255)  # BGR: orange
 
 
 def detection_label(detection, status):
@@ -54,6 +58,51 @@ def box_at_frame(frame,decision,now):
     return dict(x1=cx-k['width']/2,y1=cy-k['height']/2,x2=cx+k['width']/2,y2=cy+k['height']/2)
 
 
+def roi_display_detections(result):
+    """Prefer crop measurements for display only; never mutate tracking input."""
+    from .roi import box_iou
+    refined=[]
+    for roi in result.get('rois',[]):
+        for detection in roi['detections']:
+            refined.append(dict(detection,source='roi',roi_id=roi['id']))
+    kept=[]
+    for d in sorted(refined,key=lambda d:d['confidence'],reverse=True):
+        if any(d.get('class_id')==other.get('class_id') and box_iou(d['box'],other['box'])>=.5 for other in kept):
+            continue
+        kept.append(d)
+    full=[dict(d,source='full') for d in result['detections']
+          if not any(box_iou(d['box'],r['box'])>=.3 for r in kept)]
+    return full+kept
+
+
+def draw_roi_annotations(image,scale,result):
+    for roi in result.get('rois',[]):
+        box=dict(zip(('x1','y1','x2','y2'),roi['box']))
+        draw_box(image,box,PURPLE,
+                 f"ROI {roi['id']} {roi['status']} {roi['hits']}/{roi['required']}",
+                 dashed=True,scale=scale)
+    detections=roi_display_detections(result)
+    for d in detections:
+        name=d.get('model_class_name','drone')
+        if d['source']=='roi':
+            color=ROI_NEO if name=='NEO' else ROI_MINI if name=='MINI PRO4' else BLUE
+        else:
+            color=YELLOW if name=='NEO' else RED if name=='MINI PRO4' else BLUE
+        label_name='MINI PRO 4' if name=='MINI PRO4' else name
+        label=f"{label_name} FROM ROI {d['confidence']:.2f}" if d['source']=='roi' else detection_label(d,'YOLO')
+        for contour in d.get('segments',[]):
+            points=np.asarray(contour,np.float32)*np.asarray(scale)
+            if len(points)>=3:cv2.polylines(image,[points.astype(np.int32)],True,color,1)
+        draw_box(image,dict(zip(('x1','y1','x2','y2'),d['box'])),color,label,scale=scale)
+    return detections
+
+
+def render_roi(result,output_size=None):
+    image,scale=display_image(result['frame'],output_size)
+    draw_roi_annotations(image,scale,result)
+    return image
+
+
 def render_bundle(frame,analysis,decision,mode,stale_seconds=.75,now=None,output_size=None):
     now=time.monotonic() if now is None else now
     metadata={'display_mode':mode,'detections':[],'selected_box':None,'display_box':None}
@@ -62,17 +111,22 @@ def render_bundle(frame,analysis,decision,mode,stale_seconds=.75,now=None,output
         bound=analysis.get('decision');age=now-chosen.decoded_at
         if age<=.300:
             selected=analysis.get('selected_box')
-            for d in result['detections']:
-                box=dict(zip(('x1','y1','x2','y2'),d['box']))
-                is_selected=d.get('tracking_eligible',True) and selected and all(abs(box[k]-selected[k])<.01 for k in box)
-                color=RED if d.get('model_class_name')=='MINI PRO4' else BLUE
-                for contour in d.get('segments',[]):
-                    points=np.asarray(contour,np.float32)*np.asarray(scale)
-                    if len(points)>=3:cv2.polylines(image,[points.astype(np.int32)],True,color,1)
-                draw_box(image,box,color,
-                         detection_label(d, 'SELECTED' if is_selected else 'YOLO'),scale=scale)
-            metadata.update(detections=result['detections'],selected_box=selected,display_box=selected)
+            if result.get('rois'):
+                visible=draw_roi_annotations(image,scale,result)
+                metadata.update(detections=visible,rois=result['rois'],selected_box=selected,display_box=selected)
+            else:
+                for d in result['detections']:
+                    box=dict(zip(('x1','y1','x2','y2'),d['box']))
+                    is_selected=d.get('tracking_eligible',True) and selected and all(abs(box[k]-selected[k])<.01 for k in box)
+                    color=RED if d.get('model_class_name')=='MINI PRO4' else YELLOW if d.get('model_class_name')=='NEO' else BLUE
+                    for contour in d.get('segments',[]):
+                        points=np.asarray(contour,np.float32)*np.asarray(scale)
+                        if len(points)>=3:cv2.polylines(image,[points.astype(np.int32)],True,color,1)
+                    draw_box(image,box,color,
+                             detection_label(d, 'SELECTED' if is_selected else 'YOLO'),scale=scale)
+                metadata.update(detections=result['detections'],selected_box=selected,display_box=selected)
         title=f'ANALYZED frame {chosen.frame_id} | measured YOLO boxes'
+        if result.get('rois'):title+=f" | ROIs {len(result['rois'])} | ROI {result.get('roi_ms',0):.0f} ms"
         metadata['inference_ms']=result['inference_ms']
     elif frame:
         chosen=frame;image,scale=display_image(chosen,output_size);bound=decision

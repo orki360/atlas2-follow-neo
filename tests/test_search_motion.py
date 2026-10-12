@@ -84,4 +84,21 @@ class SearchMotionTests(unittest.TestCase):
         d=r.update(12.01,True,False,'APPROACH',False,s,heading(12.01))
         self.assertEqual(d['phase'],'DONE');self.assertEqual(d['reason'],'boost_timeout')
 
+
+    def test_scan_profile_caps_both_directions_and_boost_handoff(self):
+        for sign in (-1,1):
+            profile=SearchYawProfile();profile.reset(10,sign)
+            values=[profile.update(sign*360,0,10+i*.05) for i in range(1,30)]
+            self.assertTrue(all(0<sign*v<=.5 for v in values))
+            self.assertAlmostEqual(values[-1],sign*.5)
+            self.assertEqual(profile.update(sign*1,sign*100,11.5),0)
+
+    def test_scan_send_gate_caps_valid_full_scale_decisions(self):
+        from follow_neo.recovery_search import scan_command
+        for scenario,sign in [('LEFT',-1),('RIGHT',1)]:
+            test=SearchTest(Settings(search_yaw_degrees=180),heading(10),10,scenario,lambda *a:None)
+            test.update(heading(10.3),10.3)
+            test.decision['edge_search']['scan_yaw']=sign*.9
+            self.assertEqual(scan_command(test.decision,10.3,10),sign*.5)
+
 if __name__=='__main__':unittest.main()

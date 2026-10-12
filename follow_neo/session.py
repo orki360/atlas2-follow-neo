@@ -19,6 +19,7 @@ from .botsort_tracker import low_threshold
 from .cadence import FrameRateGate
 from .telemetry import HeadingReceiver,heading_snapshot
 from .models import resolve_model,DEFAULT_MODEL
+from .roi import RoiSettings, RoiVerifier, roi_cache_allowed
 
 
 class SessionLog:
@@ -52,10 +53,11 @@ class SessionLog:
 
 class FollowSession:
     def __init__(self,root,host,codec='h264',settings=None,record_raw=False,compute_mode='Auto',device_id=-1,
-                 model_name=DEFAULT_MODEL,recording_profile='Auto'):
+                 model_name=DEFAULT_MODEL,recording_profile='Auto',roi_settings=None):
         self.root=Path(root); self.settings=(settings or Settings()).validate()
         self.model_path,self.model_manifest=resolve_model(self.root,model_name)
         self.recording_profile=recording_profile
+        self.roi_settings=(roi_settings or RoiSettings()).validate()
         self.compute_mode=compute_mode; self.device_id=device_id; self.recorder=None
         self.recorder_lock=threading.Lock(); self.generation=0
         self.settings_lock=threading.Lock(); self.stop_event=threading.Event()
@@ -70,7 +72,7 @@ class FollowSession:
         self.log=SessionLog(self.output/'events.jsonl')
         self.log.write('session_start',{'version':__version__,'host':host,'port':9999,
              'codec':codec,'compute_requested':compute_mode,'device_id':device_id,'settings':asdict(self.settings),
-             'model':self.model_manifest,'recording_profile':recording_profile,
+             'model':self.model_manifest,'recording_profile':recording_profile,'roi':asdict(self.roi_settings),
              'tracking_backend':'BoT-SORT','tracking_reid':False,
              'tracking_motion':'botsort_only','tracking_revision':__revision__,'control_revision':'damped-yaw-1',
              'flight_control':'explicit_manual_or_dance_enable_required',
@@ -115,6 +117,16 @@ class FollowSession:
         self.restart_control()
         self.log.write('settings',{'settings':asdict(settings),'tracking_reset':False,'control_reset':True})
 
+    def configure_roi(self, settings):
+        settings.validate()
+        with self.settings_lock:
+            self.roi_settings=settings
+            self.generation+=1
+            self.result.set(None)
+        self.analysis.set(None);self.decision.set(None)
+        self.reset_event.set()
+        self.log.write('roi_settings',asdict(settings))
+
     def restart_control(self):
         self.decision.set(None)
         self.control_reset_event.set()
@@ -123,6 +135,11 @@ class FollowSession:
     def reset(self):
         with self.settings_lock: self.generation+=1
         self.reset_event.set()
+
+    def configure_scan_speed(self,limit):
+        with self.settings_lock:
+            self.settings=replace(self.settings,scan_yaw_limit=float(limit)).validate()
+        self.log.write('scan_speed_settings',{'scan_yaw_limit':float(limit),'tracking_reset':False})
 
     def configure_search(self,angle,seconds,enabled,auto_duration=None):
         # Search settings do not change the detector, tracker or distance state.
@@ -160,14 +177,16 @@ class FollowSession:
                              'providers':detector.session.get_providers(),
                              'class_names':detector.class_names,'compute':detector.compute_info}
             self.log.write('model_ready',self.model_info)
-            last_id=0;frame_version=0;sampler=FrameRateGate()
+            last_id=0;frame_version=0;sampler=FrameRateGate();verifier=RoiVerifier()
             while not self.stop_event.is_set():
                 frame,new_version=self.receiver.frames.wait_next(frame_version,.10)
                 if self.stop_event.is_set():break
                 if new_version==frame_version or frame is None:continue
                 self.inference_skips+=max(0,new_version-frame_version-1)
                 frame_version=new_version
-                with self.settings_lock: settings=self.settings; generation=self.generation
+                with self.settings_lock:
+                    settings=self.settings; generation=self.generation
+                    roi_settings=getattr(self,'roi_settings',RoiSettings())
                 now=time.monotonic()
                 if frame.frame_id==last_id:continue
                 last_id=frame.frame_id
@@ -178,6 +197,11 @@ class FollowSession:
                                                    input_height=detector.input.shape[2],confidence=low_threshold(settings.confidence),
                                                    iou_threshold=settings.nms_iou)
                 result=detector.detect(frame.image)
+                decisions=getattr(self,'decision',None)
+                allow_cached=roi_cache_allowed(decisions.get() if decisions is not None else None,time.monotonic())
+                result=verifier.process(frame,result,detector,roi_settings,generation=generation,
+                                        allow_cached=allow_cached,cache_confidence=max(settings.confidence,settings.new_track_confidence),
+                                        cancelled=lambda:self.stop_event.is_set() or generation!=self.generation)
                 result.update(frame=frame,completed_at=time.monotonic(),generation=generation)
                 with self.settings_lock:
                     if generation==self.generation: self.result.set(result)
@@ -252,6 +276,9 @@ class FollowSession:
                           decoded_at=result['frame'].decoded_at,inference_ms=result['inference_ms'],
                           preprocess_ms=result['preprocess_ms'],postprocess_ms=result['postprocess_ms'],
                           detections=[{k:v for k,v in d.items() if k!='segments'} for d in result['detections']],
+                          roi_ms=result.get('roi_ms',0.),roi_inferences=result.get('roi_inferences',0),
+                          roi_cached=result.get('roi_cached',0),full_inference_ms=result.get('full_inference_ms',result['inference_ms']),
+                          rois=[{**r,'detections':[{k:v for k,v in d.items() if k!='segments'} for d in r['detections']]} for r in result.get('rois',[])],
                           result_ready_at=result['completed_at'],
                           result_to_control_ms=max(0.,now-result['completed_at'])*1000)
                     self.log.write('observation',payload); last_state=key; last_log=now

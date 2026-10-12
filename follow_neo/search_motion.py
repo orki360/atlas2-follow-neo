@@ -11,6 +11,7 @@ from .telemetry import fresh_heading
 
 BOOST_MAX_SECONDS = 2.0
 MAX_BOOST_ANGLE = 180.0
+SCAN_MAX_YAW = .50
 
 
 def search_duration_limit(angle):
@@ -25,7 +26,7 @@ BRAKE_RESERVE_DEGREES = 2.0
 YAW_RISE_PER_SECOND = 1.0
 
 def motion_parameters():
-    return dict(boost_max_seconds=BOOST_MAX_SECONDS,rate_window_seconds=RATE_WINDOW_SECONDS,
+    return dict(boost_max_seconds=BOOST_MAX_SECONDS,scan_max_yaw=SCAN_MAX_YAW,rate_window_seconds=RATE_WINDOW_SECONDS,
                 nominal_yaw_rate_deg_s=NOMINAL_YAW_RATE,brake_response_seconds=BRAKE_RESPONSE_SECONDS,
                 brake_deceleration_deg_s2=BRAKE_DECELERATION,brake_reserve_degrees=BRAKE_RESERVE_DEGREES,
                 yaw_rise_per_second=YAW_RISE_PER_SECOND)
@@ -73,7 +74,7 @@ class SearchYawProfile:
     def reset(self,now,command=0.):
         self.command=command;self.time=now;self.holding=False;self.diagnostics={}
 
-    def update(self,distance,rate,now):
+    def update(self,distance,rate,now,limit=SCAN_MAX_YAW):
         side=1 if distance>0 else -1
         closing=max(0.,side*(rate or 0.))
         # Invert distance = response_delay * speed + speed^2 / (2 * decel).
@@ -81,7 +82,7 @@ class SearchYawProfile:
         # Subtracting that tolerance here would asymptotically stop short of it.
         usable=abs(distance)
         ad=BRAKE_DECELERATION*BRAKE_RESPONSE_SECONDS
-        desired=min(NOMINAL_YAW_RATE,max(0.,math.sqrt(ad*ad+2*BRAKE_DECELERATION*usable)-ad))
+        desired=min(NOMINAL_YAW_RATE*limit,max(0.,math.sqrt(ad*ad+2*BRAKE_DECELERATION*usable)-ad))
         raw=max(0.,min(desired/NOMINAL_YAW_RATE,(1.5*desired-.5*closing)/NOMINAL_YAW_RATE))
         if raw<=0:self.holding=True
         elif self.holding and closing<=max(5.,desired-5.):self.holding=False
@@ -92,5 +93,5 @@ class SearchYawProfile:
         self.command=side*magnitude;self.time=now
         self.diagnostics=dict(desired_rate_deg_s=side*desired,closing_rate_deg_s=closing,
             braking_distance_degrees=braking_distance(closing),raw_yaw=side*raw,
-            control_reason='brake_hold' if self.holding else 'accelerating' if magnitude<raw else 'braking' if raw<1 else 'turning')
+            control_reason='brake_hold' if self.holding else 'accelerating' if magnitude<raw else 'braking' if raw<limit else 'turning')
         return self.command

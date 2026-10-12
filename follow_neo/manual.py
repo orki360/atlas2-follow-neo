@@ -1,4 +1,5 @@
 """Manual input and a control-only MSDKRemote connection (TCP 9998)."""
+from dataclasses import replace
 import socket
 import threading
 import time
@@ -176,6 +177,11 @@ class ManualControl:
             if reason in ('keyboard_override','dance_selected','flight_action'):
                 self.search_test.finish(time.monotonic())
         if self.mode=='SEARCH_TEST':self.mode='MANUAL';self.keys.clear()
+
+    def configure_scan_speed(self,limit):
+        with self.lock:
+            if self.search_test and not self.search_test.finished:
+                self.search_test.settings=replace(self.search_test.settings,scan_yaw_limit=float(limit)).validate()
 
     def stop_search_test(self):
         with self.lock:self._stop_search_test('operator_stop')

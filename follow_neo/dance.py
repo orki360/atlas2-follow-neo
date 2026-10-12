@@ -2,6 +2,7 @@
 import math
 from .edge_search import yaw_override
 from .recovery_search import scan_command
+from .search_motion import SCAN_MAX_YAW
 from .control_status import target_status_text
 from .prediction import (COAST_SECONDS, COAST_YAW, COAST_VERTICAL, STABLE_FORWARD_SECONDS,
                          fade, forward_fade)
@@ -33,7 +34,7 @@ def dance_command(decision,now,started):
     search=decision.get('edge_search') or {}
     if state=='DIRECTIONAL_SEARCH' and search.get('phase')=='SCAN':
         turn=scan_command(decision,now,started)
-        return (turn,0.,0.,0.),'Scan / '+('RIGHT' if turn>0 else 'LEFT' if turn<0 else 'PAUSED')+(' / yaw up to 100%, braking' if search.get('yaw_full_scale') else ' / normal yaw limit')
+        return (turn,0.,0.,0.),'Scan / '+('RIGHT' if turn>0 else 'LEFT' if turn<0 else 'PAUSED')+(f" / yaw up to {search.get('scan_yaw_limit',SCAN_MAX_YAW):.0%}, braking" if search.get('yaw_full_scale') else ' / normal yaw limit')
     if state=='DIRECTIONAL_SEARCH':return ZERO,'Search held: heading, angle or time contract expired'
     if state in ('HOVER_WAIT','WAIT_TARGET','SEARCH'):
         return ZERO,'Hover / '+str(decision.get('reason','waiting_target'))

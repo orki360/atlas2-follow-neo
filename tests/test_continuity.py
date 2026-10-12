@@ -49,21 +49,20 @@ class ContinuityTests(unittest.TestCase):
         if not accepted:accepted=self.feed([detection(250,.2)])
         self.assertTrue(accepted);self.assertEqual(self.t.logical_target_id,identity)
         self.assertTrue(self.t.measurement_weak);self.assertFalse(self.t.quality()['stable'])
-    def test_distant_background_never_replaces_target(self):
+    def test_distant_candidate_cannot_replace_target_before_loss_grace(self):
         self.acquire();identity=self.t.logical_target_id;stamp=self.t.measurement_time
-        for _ in range(25):self.assertFalse(self.feed([detection(490,.99)]))
+        # Relocation is still blocked before the existing 650 ms loss grace.
+        for _ in range(19):self.assertFalse(self.feed([detection(490,.99)]))
         self.assertEqual(self.t.logical_target_id,identity);self.assertEqual(self.t.measurement_time,stamp)
     def test_ambiguous_nearby_candidates_do_not_reacquire(self):
         self.acquire();self.feed([])
         for _ in range(5):self.assertFalse(self.feed([detection(150,.2),detection(250,.2)]))
         self.assertEqual(self.t.association_reason,'ambiguous_candidates')
-    def test_return_after_long_gap_requires_long_strong_sequence(self):
+    def test_return_after_long_gap_requires_three_strong_observations(self):
         self.acquire();identity=self.t.logical_target_id
         for _ in range(100):self.feed([])
-        for _ in range(7):self.assertFalse(self.feed([detection(490)]))
-        accepted=False
-        for _ in range(3):accepted=self.feed([detection(490)]) or accepted
-        self.assertTrue(accepted);self.assertEqual(self.t.logical_target_id,identity)
+        for _ in range(2):self.assertFalse(self.feed([detection(490)]))
+        self.assertTrue(self.feed([detection(490)]));self.assertEqual(self.t.logical_target_id,identity)
     def test_long_gap_weak_background_cannot_acquire_elsewhere(self):
         self.acquire();stamp=self.t.measurement_time
         for _ in range(100):self.feed([])
