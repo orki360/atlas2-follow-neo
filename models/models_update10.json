@@ -6,5 +6,35 @@
   "yolo26s_seg_best_v1.onnx": {
     "sha256": "69611e6d6ecc2f74ee25229c7d4595ac701b1b95306adcb50a3399e616a099ee",
     "task": "segment"
+  },
+  "neo_minipro4_yolo26s_seg_960x544_v6.onnx": {
+    "sha256": "d20463626e6cf85e1dab11c1c35cfef6c1532897bc1089beb0732c19bf3f1a6c",
+    "task": "segment",
+    "input": [
+      1,
+      3,
+      544,
+      960
+    ],
+    "outputs": [
+      [
+        1,
+        38,
+        10710
+      ],
+      [
+        1,
+        32,
+        136,
+        240
+      ]
+    ],
+    "class_names": {
+      "0": "NEO",
+      "1": "MINI PRO4"
+    },
+    "target_class_names": [
+      "NEO"
+    ]
   }
 }

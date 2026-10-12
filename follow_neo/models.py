@@ -3,14 +3,16 @@ import hashlib
 import json
 from pathlib import Path
 
-DEFAULT_MODEL='yolo26s_seg_best_v1.onnx'
+DEFAULT_MODEL='neo_minipro4_yolo26s_seg_960x544_v6.onnx'
+PREVIOUS_MODEL='yolo26s_seg_best_v1.onnx'
 LEGACY_MODEL='best.onnx'
+MODEL_NAMES=(DEFAULT_MODEL,PREVIOUS_MODEL,LEGACY_MODEL)
 
 
 def resolve_model(root,name=None):
     root=Path(root)
     name=name or DEFAULT_MODEL
-    if name not in (DEFAULT_MODEL,LEGACY_MODEL):
+    if name not in MODEL_NAMES:
         raise ValueError('Select one of the installed, verified models.')
     path=root/'models'/name
     registry=json.loads((root/'models'/'models_update10.json').read_text(encoding='utf-8'))

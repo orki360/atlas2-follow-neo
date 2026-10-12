@@ -19,7 +19,8 @@ def check(mode='Auto', device_id=-1, model_name=None):
     model,manifest=resolve_model(ROOT,model_name);out=ROOT/'logs';out.mkdir(exist_ok=True)
     digest=hashlib.sha256(model.read_bytes()).hexdigest()
     if digest!=manifest['sha256']: raise RuntimeError('Model checksum mismatch. Reapply the update ZIP.')
-    detector=OnnxDroneDetector(model,compute_mode=mode,device_id=device_id,diagnostics_dir=out)
+    detector=OnnxDroneDetector(model,compute_mode=mode,device_id=device_id,diagnostics_dir=out,
+                               target_class_names=manifest.get("target_class_names"))
     av.Codec('libx264','w')
     timings=[]
     for _ in range(3):
@@ -42,7 +43,8 @@ def main():
     ap.add_argument('--check',action='store_true')
     ap.add_argument('--compute',choices=['Auto','GPU','CPU'],default='Auto')
     ap.add_argument('--device-id',type=int,default=-1)
-    ap.add_argument('--model',choices=['best.onnx','yolo26s_seg_best_v1.onnx'])
+    from follow_neo.models import MODEL_NAMES
+    ap.add_argument('--model',choices=MODEL_NAMES)
     args=ap.parse_args()
     if args.check: check(args.compute,args.device_id,args.model);return
     import tkinter as tk

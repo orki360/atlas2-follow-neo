@@ -153,7 +153,8 @@ class FollowSession:
     def _infer(self):
         try:
             detector=OnnxDroneDetector(self.model_path,cpu_threads=2,
-                        compute_mode=self.compute_mode,device_id=self.device_id,diagnostics_dir=self.output)
+                        compute_mode=self.compute_mode,device_id=self.device_id,diagnostics_dir=self.output,
+                        target_class_names=self.model_manifest.get("target_class_names"))
             self.model_info={'input':detector.input.shape,'output':detector.output.shape,
                              'outputs':[o.shape for o in detector.outputs],'model':self.model_manifest,
                              'providers':detector.session.get_providers(),
@@ -173,7 +174,8 @@ class FollowSession:
                 if settings.inference_fps<settings.video_fps and not sampler.admit(frame.decoded_at,settings.inference_fps):continue
                 if now-frame.decoded_at>settings.stale_seconds:
                     continue
-                detector.settings=DetectorSettings(confidence=low_threshold(settings.confidence),
+                detector.settings=DetectorSettings(input_width=detector.input.shape[3],
+                                                   input_height=detector.input.shape[2],confidence=low_threshold(settings.confidence),
                                                    iou_threshold=settings.nms_iou)
                 result=detector.detect(frame.image)
                 result.update(frame=frame,completed_at=time.monotonic(),generation=generation)
@@ -208,7 +210,10 @@ class FollowSession:
                 h,w=frame.image.shape[:2]
                 if result is not None and result.get('generation')==self.generation and result['frame'].frame_id>last_id:
                     src=result['frame']; last_id=src.frame_id
-                    detections=[Detection(Box(*d['box']),d['confidence']) for d in result['detections']]
+                    target_names = self.model_manifest.get('target_class_names')
+                    detections=[Detection(Box(*d['box']),d['confidence']) for d in result['detections']
+                                if d.get('tracking_eligible', True) and
+                                (target_names is None or d.get('model_class_name') in target_names)]
                     controller.observe(detections,src.decoded_at,now,src.frame_id,
                                        (src.image.shape[1],src.image.shape[0]),settings,image=src.image)
                     fresh_result=True
@@ -216,6 +221,13 @@ class FollowSession:
                 heading,now=heading_snapshot(self.heading)
                 decision=controller.tick(now,w,h,frame.decoded_at if self.receiver.state=='STREAMING' else None,
                                          settings,heading,control_available=authority.get('active',False) and authority.get('mode')=='DANCE')
+                # Keep display measurements separate from the controller's NEO-only evidence.
+                decision['display_detections'] = []
+                decision['display_detection_time'] = None
+                if result is not None and result.get('generation') == self.generation:
+                    decision['display_detections'] = [
+                        {k:v for k,v in d.items() if k != 'segments'} for d in result['detections']]
+                    decision['display_detection_time'] = result['frame'].decoded_at
                 decision['control_status']=authority
                 if self.model_error:
                     decision.update(state='ERROR',reason='inference_failed',stale=True,track_box=None,

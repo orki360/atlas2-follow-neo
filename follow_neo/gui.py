@@ -18,7 +18,7 @@ from . import __version__, __revision__
 from .types import Settings, settings_from_config
 from .session import FollowSession
 from .overlay import render_bundle
-from .models import DEFAULT_MODEL, LEGACY_MODEL
+from .models import DEFAULT_MODEL, MODEL_NAMES
 from .manual import ManualControl, MOVEMENT_KEYS, AXES, DEFAULT_AXIS_LIMITS
 from .control_status import control_indicator, acknowledged_command_text, target_status_text
 from .state_diagram import LiveStateDiagram
@@ -120,8 +120,8 @@ class FollowLabWindow:
         self.device_picker.pack(side='left',padx=8)
         ttk.Label(compute_bar,text='Model').pack(side='left',padx=(8,0))
         self.model=tk.StringVar(value=cfg.get('model_name',DEFAULT_MODEL))
-        if self.model.get() not in (DEFAULT_MODEL,LEGACY_MODEL):self.model.set(DEFAULT_MODEL)
-        self.model_picker=ttk.Combobox(compute_bar,textvariable=self.model,values=[DEFAULT_MODEL,LEGACY_MODEL],state='readonly',width=27)
+        if self.model.get() not in MODEL_NAMES:self.model.set(DEFAULT_MODEL)
+        self.model_picker=ttk.Combobox(compute_bar,textvariable=self.model,values=MODEL_NAMES,state='readonly',width=48)
         self.model_picker.pack(side='left',padx=6)
         self.recording_profile=tk.StringVar(value=cfg.get('recording_profile','Auto'))
         if self.recording_profile.get() not in ('Auto','1080p','720p'):self.recording_profile.set('Auto')

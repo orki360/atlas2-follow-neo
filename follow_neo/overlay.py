@@ -7,6 +7,15 @@ from .prediction import COAST_SECONDS, project_center
 
 
 BLUE=(255,100,20)  # OpenCV BGR: blue, shared by preview and saved video.
+RED=(0,0,255)
+
+
+def detection_label(detection, status):
+    name = detection.get('model_class_name')
+    label = f"{status}{' ' + name if name else ''} {detection['confidence']:.2f}"
+    if not detection.get('tracking_eligible', True):
+        label += ' DISPLAY ONLY'
+    return label
 
 
 def draw_box(image,box,color,label,dashed=False,scale=(1.,1.)):
@@ -55,12 +64,13 @@ def render_bundle(frame,analysis,decision,mode,stale_seconds=.75,now=None,output
             selected=analysis.get('selected_box')
             for d in result['detections']:
                 box=dict(zip(('x1','y1','x2','y2'),d['box']))
-                is_selected=selected and all(abs(box[k]-selected[k])<.01 for k in box)
+                is_selected=d.get('tracking_eligible',True) and selected and all(abs(box[k]-selected[k])<.01 for k in box)
+                color=RED if d.get('model_class_name')=='MINI PRO4' else BLUE
                 for contour in d.get('segments',[]):
                     points=np.asarray(contour,np.float32)*np.asarray(scale)
-                    if len(points)>=3:cv2.polylines(image,[points.astype(np.int32)],True,BLUE,1)
-                draw_box(image,box,BLUE,
-                         f"{'SELECTED' if is_selected else 'YOLO'} {d['confidence']:.2f}",scale=scale)
+                    if len(points)>=3:cv2.polylines(image,[points.astype(np.int32)],True,color,1)
+                draw_box(image,box,color,
+                         detection_label(d, 'SELECTED' if is_selected else 'YOLO'),scale=scale)
             metadata.update(detections=result['detections'],selected_box=selected,display_box=selected)
         title=f'ANALYZED frame {chosen.frame_id} | measured YOLO boxes'
         metadata['inference_ms']=result['inference_ms']
@@ -76,12 +86,17 @@ def render_bundle(frame,analysis,decision,mode,stale_seconds=.75,now=None,output
         fresh_candidates=(candidate_time is not None and 0<=chosen.decoded_at-candidate_time<=.25 and now-candidate_time<=.25)
         if not fresh_candidates:candidates=[]
         selected=bound.get('selected_measurement_box') if bound else None
-        for d in candidates:
+        display_candidates=bound.get('display_detections',candidates) if bound else []
+        display_time=bound.get('display_detection_time',candidate_time) if bound else None
+        if display_time is None or not (0<=chosen.decoded_at-display_time<=.25 and now-display_time<=.25):
+            display_candidates=[]
+        for d in display_candidates:
             measured=dict(zip(('x1','y1','x2','y2'),d['box']))
-            matched=bool(selected and np.allclose(d['box'],selected,atol=.01))
-            draw_box(image,measured,(60,220,80) if matched else (0,180,255),
-                     f"{'MEASURED' if matched else 'CANDIDATE'} {d['confidence']:.2f}",scale=scale)
-        metadata['detections']=candidates
+            matched=bool(d.get('tracking_eligible',True) and selected and np.allclose(d['box'],selected,atol=.01))
+            color=RED if d.get('model_class_name')=='MINI PRO4' else (60,220,80) if matched else (0,180,255)
+            draw_box(image,measured,color,
+                     detection_label(d, 'MEASURED' if matched else 'CANDIDATE' if d.get('tracking_eligible',True) else 'YOLO'),scale=scale)
+        metadata['detections']=display_candidates
         label=(f"PREDICTED {age:.0f} ms / {'YOLO UNMATCHED' if candidates else 'NO DETECTION'}" if predicted else
                'WEAK YOLO + KALMAN' if support=='weak_yolo' else 'YOLO + KALMAN')
         tracking=bound.get('tracking',{}) if bound else {}
