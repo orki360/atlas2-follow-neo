@@ -14,7 +14,7 @@ class RoiSettings:
     max_box_height: int = 270
     confirmations: int = 2
     confidence: float = .50
-    match_iou: float = .30
+    match_iou: float = .20
     max_gap_seconds: float = .75
     recheck_seconds: float = .25
 
@@ -22,7 +22,7 @@ class RoiSettings:
         if not isinstance(self.enabled, bool):
             raise ValueError('ROI enabled must be a boolean')
         for name, lo, hi in [('width',32,1920),('height',32,1080),
-                             ('max_box_width',1,1920),('max_box_height',1,1080),('confirmations',1,10)]:
+                             ('max_box_width',1,1920),('max_box_height',1,1080),('confirmations',2,10)]:
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or not lo <= value <= hi:
                 raise ValueError(f'ROI {name} must be an integer between {lo} and {hi}')
@@ -127,7 +127,7 @@ class RoiVerifier:
                 if len(possible)==1 and sum(possible[0] in ids for ids in links.values())==1:
                     track=prior[possible[0]]
                 if track is None:
-                    track=dict(id=self.next_id,hits=0);self.next_id+=1
+                    track=dict(id=self.next_id,hits=0,first_frame_id=frame.frame_id,first_time=frame.decoded_at,first_confidence=d['confidence']);self.next_id+=1
                 verified_at=track.get('verified_at')
                 cached=(allow_cached and track['hits']>=settings.confirmations
                         and d['confidence']>=cache_confidence and verified_at is not None
@@ -155,7 +155,9 @@ class RoiVerifier:
                 # Competing boxes/classes do not constitute verification of this candidate.
                 match=matches[0] if len(matches)==1 else None
                 status='unresolved'
-                if match and match.get('model_class_name')=='NEO':
+                if match and match.get('model_class_name')=='NEO' and d['confidence']>=settings.confidence:
+                    if track['hits']==0:
+                        track.update(first_frame_id=frame.frame_id,first_time=frame.decoded_at,first_confidence=d['confidence'])
                     track['hits']=min(settings.confirmations,track['hits']+1)
                     status='approved' if track['hits']>=settings.confirmations else 'pending'
                     d['tracking_eligible']=status=='approved'
@@ -163,11 +165,25 @@ class RoiVerifier:
                     track.update(verified_at=frame.decoded_at,verified_confidence=match['confidence'])
                 else:
                     track['hits']=0
+                    track.update(first_frame_id=frame.frame_id,first_time=frame.decoded_at,first_confidence=d['confidence'])
+                    if match is None and not matches and track['first_frame_id']==frame.frame_id and d['confidence']>=settings.confidence:
+                        # The first observation may be full-frame only; the next
+                        # distinct frame still needs a positive ROI classification.
+                        track['hits']=1;status='pending'
                     if match and match.get('model_class_name')=='MINI PRO4':
                         status='rejected_mini'
                         d.update(class_id=match['class_id'],model_class_name='MINI PRO4',confidence=match['confidence'])
                 # Retain the full-frame box for the existing distance/control contract.
                 d.update(roi_status=status,roi_id=track['id'],roi_hits=track['hits'])
+                if status=='approved':
+                    d['confirmation']=dict(first_frame_id=track['first_frame_id'],first_time=track['first_time'],
+                        first_confidence=track['first_confidence'],frame_id=frame.frame_id,time=frame.decoded_at,
+                        roi_confidence=match['confidence'],threshold=settings.confidence,
+                        hits=track['hits'],required=settings.confirmations,max_gap_seconds=settings.max_gap_seconds)
+                # Retain the immediately preceding confirmed frame as the next
+                # proof's first observation; stale approvals cannot reacquire.
+                if status=='approved':
+                    track.update(first_frame_id=frame.frame_id,first_time=frame.decoded_at,first_confidence=d['confidence'])
                 track.update(box=list(d['box']),time=frame.decoded_at)
                 next_tracks[track['id']]=track
                 output['rois'].append(dict(id=track['id'],box=bounds,candidate_box=list(d['box']),

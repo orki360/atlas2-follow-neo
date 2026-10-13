@@ -20,6 +20,7 @@ class DirectionTests(unittest.TestCase):
             if side<0:cx=1280-cx
             self.r.observe(True,False,True,Box(cx-40,320,cx+40,360),Kinematics(),1280,720,t,i,self.s)
             self.r.update(t,False,False,'APPROACH',False,self.s,heading(t))
+        self.r.observe_result(t+.3,10,False);self.r.observe_result(t+.4,11,False)
         self.start=t+.5
         return self.step(self.start)
     def step(self,t,yaw=0,**kwargs):
@@ -96,6 +97,7 @@ class DirectionTests(unittest.TestCase):
         self.assertEqual(yaw_override(self.decision(d,self.start+2.),self.start+2.,9),0)
     def test_recorded_left_loss_skips_boost_when_already_turning_toward_boundary(self):
         r=RecoverySearch();s=Settings(search_yaw_degrees=90,edge_search_seconds=2)
+        r.observe_result(10.3,1,False);r.observe_result(10.4,2,False)
         r.eligible=True;r.source_time=10.;r.loss_heading=101.8;r.loss_heading_time=10.05
         r.loss_heading_source='AircraftAttitude';r.estimated_direction=-1;r.direction_source='measured_motion'
         r.edge.direction=-1;r.edge.evidence={'outward':True};r.box_edge=True

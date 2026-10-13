@@ -16,13 +16,16 @@ import numpy as np
 from .overlay import render_bundle
 
 TIME_BASE=Fraction(1,90000)
+KEYFRAME_INTERVAL_SECONDS=.5
+KEYFRAME_INTERVAL_PTS=45000
+MAX_GOP_FRAMES=30
 _PROBES={}
 _PROBE_LOCK=threading.Lock()
 
 
 def encoder_options(name):
-    if name=='h264_nvenc':return {'preset':'p1','tune':'ll','rc':'constqp','qp':'23','bf':'0'}
-    return {'preset':'ultrafast','crf':'20','tune':'zerolatency','bf':'0'}
+    if name=='h264_nvenc':return {'preset':'p1','tune':'ll','rc':'constqp','qp':'23','bf':'0','forced-idr':'1'}
+    return {'preset':'ultrafast','crf':'20','tune':'zerolatency','bf':'0','forced-idr':'1','x264-params':'open-gop=0'}
 
 
 def probe_nvenc(width,height,count=2):
@@ -35,6 +38,7 @@ def probe_nvenc(width,height,count=2):
             for _ in range(count):
                 c=av.CodecContext.create('h264_nvenc','w');contexts.append(c)
                 c.width=width;c.height=height;c.pix_fmt='yuv420p';c.time_base=TIME_BASE
+                c.gop_size=MAX_GOP_FRAMES
                 c.options=encoder_options('h264_nvenc');c.open()
             for c in contexts:
                 f=av.VideoFrame.from_ndarray(np.zeros((height*3//2,width),np.uint8),format='yuv420p')
@@ -81,6 +85,7 @@ class VideoRecorder:
             return dict(mode=self.mode,state=self.state,error=self.error,written=self.written,dropped=self.dropped,
                 path=str(self.directory),elapsed_seconds=elapsed,profile=self.profile,encoder=self.encoder,
                 resolution=self.size,source_resolution=self.source_size,fallback_reason=self.fallback_reason,
+                keyframe_interval_seconds=KEYFRAME_INTERVAL_SECONDS,
                 recorded_fps=(self.written-1)/elapsed if elapsed>0 and self.written else 0.,
                 encode_ms_mean=sum(self.encode_times)/len(self.encode_times) if self.encode_times else 0.,
                 queue_age_ms_max=max(self.queue_times,default=0.),queue_depth=self.queue.qsize())
@@ -94,11 +99,12 @@ class VideoRecorder:
         outputs={}
         try:
             for kind in kinds:
-                container=av.open(str(self.directory/f'{kind}.mp4'),'w')
+                container=av.open(str(self.directory/f'{kind}.mp4'),'w',options={'movflags':'+faststart'})
                 stream=container.add_stream(self.encoder,rate=30);outputs[kind]=(container,stream)
                 stream.width=width;stream.height=height
                 stream.pix_fmt='yuv420p' if width%2==0 and height%2==0 else 'yuv444p'
                 stream.time_base=TIME_BASE;stream.codec_context.time_base=TIME_BASE
+                stream.codec_context.gop_size=MAX_GOP_FRAMES
                 stream.options=encoder_options(self.encoder);stream.codec_context.thread_count=2
                 stream.codec_context.open()
             return outputs
@@ -107,17 +113,18 @@ class VideoRecorder:
             raise
 
     @staticmethod
-    def _encode(output,source,pts):
+    def _encode(output,source,pts,force_keyframe=False):
         container,stream=output
         # Fast explicit conversion avoids two costly implicit swscale paths.
         if source.shape[0]%2==0 and source.shape[1]%2==0:
             picture=av.VideoFrame.from_ndarray(cv2.cvtColor(source,cv2.COLOR_BGR2YUV_I420),format='yuv420p')
         else:picture=av.VideoFrame.from_ndarray(source,format='bgr24')
         picture.pts=pts;picture.time_base=TIME_BASE
+        if force_keyframe:picture.pict_type=av.video.frame.PictureType.I
         for packet in stream.encode(picture):container.mux(packet)
 
     def _run(self):
-        outputs={};metadata=None;last_pts=-1;last_event=0.
+        outputs={};metadata=None;last_pts=-1;last_event=0.;next_keyframe_pts=0
         pool=ThreadPoolExecutor(max_workers=2,thread_name_prefix='video-encode')
         try:
             metadata=(self.directory/'frames.jsonl').open('w',encoding='utf-8')
@@ -140,14 +147,19 @@ class VideoRecorder:
                     self.state='RECORDING';self.on_event('recording_encoder',self.status())
                 if self.source_size!=(w,h):raise RuntimeError('Video resolution changed; start a new recording.')
                 pts=max(last_pts+1,round((frame.decoded_at-self.first_time)*90000));last_pts=pts
-                row=dict(frame_id=frame.frame_id,decoded_at=frame.decoded_at,pts=pts,time_base='1/90000',resolution=self.size)
+                # Schedule by source time, not assumed FPS. After a gap, the first
+                # available frame is an IDR in BOTH outputs; no catch-up burst.
+                force_keyframe=pts>=next_keyframe_pts
+                if force_keyframe:next_keyframe_pts=pts+KEYFRAME_INTERVAL_PTS
+                row=dict(frame_id=frame.frame_id,decoded_at=frame.decoded_at,pts=pts,time_base='1/90000',resolution=self.size,
+                         keyframe_requested=force_keyframe)
                 started=time.monotonic();sources={}
                 if 'clean' in outputs:
                     sources['clean']=frame.image if self.size==(w,h) else cv2.resize(frame.image,self.size,interpolation=cv2.INTER_AREA)
                 if 'prediction' in outputs:
                     sources['prediction'],_,overlay=render_bundle(frame,None,decision,'Live prediction',now=frame.decoded_at,output_size=self.size)
                     row['overlay']=overlay
-                futures=[pool.submit(self._encode,output,sources[kind],pts) for kind,output in outputs.items()]
+                futures=[pool.submit(self._encode,output,sources[kind],pts,force_keyframe) for kind,output in outputs.items()]
                 for future in futures:future.result()
                 ended=time.monotonic()
                 row.update(encode_ms=(ended-started)*1000,queue_age_ms=(started-enqueued)*1000)

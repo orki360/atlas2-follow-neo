@@ -135,7 +135,8 @@ class RoiTests(unittest.TestCase):
             self.detector.detect.side_effect=lambda image:dict(detections=local)
             result=self.process(self.calls+2);self.calls+=1
             self.assertFalse(result['detections'][0]['tracking_eligible'])
-            self.assertEqual(result['rois'][0]['hits'],0)
+            self.assertEqual(result['rois'][0]['hits'],0 if local else 1)
+            self.assertNotIn('confirmation',result['detections'][0])
 
     def test_exact_entry_threshold_and_large_box_bypass(self):
         self.candidates=[detection((500,300,980,570))]
@@ -209,7 +210,7 @@ class RoiTests(unittest.TestCase):
 
     def test_settings_validation_and_config_roundtrip(self):
         self.assertEqual(RoiSettings.from_config({'roi':asdict(self.settings)}),self.settings)
-        for fields in ({'max_box_width':961},{'width':20},{'confirmations':0},{'confidence':float('nan')},{'match_iou':0.},{'height':540.5},{'recheck_seconds':-1},{'recheck_seconds':float('nan')}):
+        for fields in ({'max_box_width':961},{'width':20},{'confirmations':0},{'confirmations':1},{'confidence':float('nan')},{'match_iou':0.},{'height':540.5},{'recheck_seconds':-1},{'recheck_seconds':float('nan')}):
             with self.subTest(fields=fields),self.assertRaises(ValueError):replace(self.settings,**fields).validate()
 
     def test_render_uses_source_frame_and_requested_colors(self):

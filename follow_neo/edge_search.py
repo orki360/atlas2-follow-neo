@@ -40,13 +40,13 @@ class EdgeYawSearch:
         self.history.append((source_time,box.cx/width,box.cy/height,box.width/width))
         while self.history and source_time-self.history[0][0]>.65:self.history.popleft()
         self.hits=len(self.history)
-        if not confirmed or len(self.history)<3:
+        if not confirmed or len(self.history)<2:
             self.reason='insufficient_motion_history';return
         first,last=self.history[0],self.history[-1];span=last[0]-first[0]
-        if span<.08:self.reason='short_motion_history';return
+        if span<=0:self.reason='short_motion_history';return
         pairs=list(self.history)
         # Median of nonadjacent slopes resists frame-to-frame BBOX jitter.
-        slopes=[(b[1]-a[1])/(b[0]-a[0]) for i,a in enumerate(pairs) for b in pairs[i+1:] if b[0]-a[0]>=.06]
+        slopes=[(b[1]-a[1])/(b[0]-a[0]) for i,a in enumerate(pairs) for b in pairs[i+1:] if b[0]>a[0]]
         vx=statistics.median(slopes);travel=last[1]-first[1];side=1 if vx>0 else -1
         steps=[b[1]-a[1] for a,b in zip(pairs,pairs[1:])]
         agree=sum(v*side>=-.003 for v in steps)/len(steps)
@@ -54,13 +54,13 @@ class EdgeYawSearch:
         outward=last[1]>.54 if side>0 else last[1]<.46
         exit_seconds=max(0.,(1-edge)/max(abs(vx),.001))
         supported=(abs(vx)>=.035 and abs(travel)>=.012 and travel*side>0 and agree>=.65
-                   and outward and (exit_seconds<=2.5 or edge>=.88))
+                   and outward and (exit_seconds<=2.5 or edge>=1-settings.boost_edge_zone))
         self.evidence=dict(image_vx=vx,kalman_vx=k.vx/width,span_seconds=span,
             direction_agreement=agree,estimated_exit_seconds=exit_seconds,
             center_x=last[1],net_travel=travel,outward=outward,
             blocked_by=[] if supported else [name for name,ok in (
                 ('speed',abs(vx)>=.035),('travel',abs(travel)>=.012 and travel*side>0),
-                ('consistency',agree>=.65),('side',outward),('exit_horizon',exit_seconds<=2.5 or edge>=.88)) if not ok])
+                ('consistency',agree>=.65),('side',outward),('exit_horizon',exit_seconds<=2.5 or edge>=1-settings.boost_edge_zone)) if not ok])
         if supported:
             self.direction=side;self.armed_time=source_time;self.reason='outward_motion_history'
         elif self.direction and self.armed_time is not None and source_time-self.armed_time<=.45 and not (abs(travel)>=.025 and side!=self.direction):

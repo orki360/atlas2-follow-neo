@@ -136,6 +136,11 @@ class FollowSession:
         with self.settings_lock: self.generation+=1
         self.reset_event.set()
 
+    def configure_boost(self,edge_zone,entry_delay):
+        with self.settings_lock:
+            self.settings=replace(self.settings,boost_edge_zone=float(edge_zone),boost_entry_delay=float(entry_delay)).validate()
+        self.log.write('boost_settings',dict(edge_zone=float(edge_zone),entry_delay=float(entry_delay),tracking_reset=False))
+
     def configure_scan_speed(self,limit):
         with self.settings_lock:
             self.settings=replace(self.settings,scan_yaw_limit=float(limit)).validate()
@@ -235,11 +240,15 @@ class FollowSession:
                 if result is not None and result.get('generation')==self.generation and result['frame'].frame_id>last_id:
                     src=result['frame']; last_id=src.frame_id
                     target_names = self.model_manifest.get('target_class_names')
-                    detections=[Detection(Box(*d['box']),d['confidence']) for d in result['detections']
+                    detections=[Detection(Box(*d['box']),d['confidence'],d.get('confirmation')) for d in result['detections']
                                 if d.get('tracking_eligible', True) and
                                 (target_names is None or d.get('model_class_name') in target_names)]
+                    # Pending NEO may pause search, but a ROI-classified MINI must not.
+                    candidates=[Detection(Box(*d['box']),d['confidence']) for d in result['detections']
+                                if d.get('model_class_name')=='NEO' and d['confidence']>=getattr(self,'roi_settings',RoiSettings()).confidence]
                     controller.observe(detections,src.decoded_at,now,src.frame_id,
-                                       (src.image.shape[1],src.image.shape[0]),settings,image=src.image)
+                                       (src.image.shape[1],src.image.shape[0]),settings,image=src.image,
+                                       visible_candidates=candidates)
                     fresh_result=True
                 authority=self.control_provider() if self.control_provider else {}
                 heading,now=heading_snapshot(self.heading)

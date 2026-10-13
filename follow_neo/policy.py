@@ -93,9 +93,9 @@ class DeterministicTrackingPolicy:
                 if new:
                     self.hits+=1
                     if self.reacquire_since is None:self.reacquire_since=measurement_time
-                if verified_recovery:self.hits=max(3,self.hits)
-                ready=(verified_recovery or (self.hits>=3 and self.reacquire_since is not None
-                       and measurement_time-self.reacquire_since>=.06))
+                if verified_recovery:self.hits=max(2,self.hits)
+                ready=(verified_recovery or (self.hits>=2 and self.reacquire_since is not None
+                       and measurement_time>self.reacquire_since))
                 state='TRACK' if ready else 'REACQUIRE'
                 reason='reacquire_confirmed' if ready else 'reacquire_confirming'
             if state=='TRACK':self.last=command.bounded()

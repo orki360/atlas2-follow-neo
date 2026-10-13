@@ -17,7 +17,7 @@ class RoiPanel:
         self.variables={}
         fields=[('Crop width','width'),('Crop height','height'),('Max BBOX width','max_box_width'),
                 ('Max BBOX height','max_box_height'),('Confirmations','confirmations'),
-                ('ROI confidence','confidence'),('Matching IoU','match_iou'),('Max confirmation gap (s)','max_gap_seconds'),
+                ('ROI confidence','confidence'),('Matching IoU (0.20 = 20%)','match_iou'),('Max confirmation gap (s)','max_gap_seconds'),
                 ('Confirmed recheck interval (s)','recheck_seconds')]
         for label,name in fields:
             row=ttk.Frame(self.tab);row.pack(fill='x',pady=2)
@@ -26,7 +26,7 @@ class RoiPanel:
             ttk.Entry(row,textvariable=var,width=9).pack(side='right')
         ttk.Button(self.tab,text='Apply ROI settings',command=self.apply).pack(fill='x',pady=6)
         ttk.Button(self.tab,text='Show ROI in Analyzed frame',command=self.show_analyzed).pack(fill='x')
-        self.note=tk.StringVar(value='Two confirmations use distinct processed frames.\nFresh tracking: periodic ROI checks.\nAcquisition / loss: every frame. 0 s = every frame.')
+        self.note=tk.StringVar(value='Two distinct frames confirm the target at the ROI confidence threshold.\nFresh tracking: periodic ROI checks.\nAcquisition / loss: every frame. 0 s = every frame.')
         ttk.Label(self.tab,textvariable=self.note,wraplength=370).pack(anchor='w',pady=8)
         ttk.Label(self.tab,text='Full frame: NEO yellow / MINI red\nFrom ROI: NEO turquoise / MINI orange\nROI boundary: purple dashed',wraplength=370).pack(anchor='w',pady=4)
         self.status=tk.StringVar(value='ROI drawings appear in Analyzed frame.')

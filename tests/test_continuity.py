@@ -34,11 +34,11 @@ class ContinuityTests(unittest.TestCase):
         self.acquire();identity=self.t.logical_target_id;old=self.t.target_id
         # IoU = 5 / 115, far below the old 0.5 continuation threshold.
         self.assertFalse(self.feed([detection(255)]));self.assertTrue(self.t.candidate_pending)
-        self.assertFalse(self.feed([detection(255)]));self.assertTrue(self.feed([detection(255)]))
+        self.assertTrue(self.feed([detection(255)]))
         self.assertEqual(self.t.logical_target_id,identity)
         self.assertEqual(self.t.target_id,old)
         self.assertNotEqual(self.t.identity_event['candidate_track_id'],old)
-        self.assertEqual(self.t.identity_event['observations'],3)
+        self.assertEqual(self.t.identity_event['observations'],2)
     def test_weak_sequence_restores_lost_track_but_cannot_acquire(self):
         self.assertFalse(self.feed([detection(255,.2)]));self.acquire();identity=self.t.logical_target_id
         self.feed([]);stamp=self.t.measurement_time
@@ -58,10 +58,10 @@ class ContinuityTests(unittest.TestCase):
         self.acquire();self.feed([])
         for _ in range(5):self.assertFalse(self.feed([detection(150,.2),detection(250,.2)]))
         self.assertEqual(self.t.association_reason,'ambiguous_candidates')
-    def test_return_after_long_gap_requires_three_strong_observations(self):
+    def test_return_after_long_gap_requires_two_strong_observations(self):
         self.acquire();identity=self.t.logical_target_id
         for _ in range(100):self.feed([])
-        for _ in range(2):self.assertFalse(self.feed([detection(490)]))
+        self.assertFalse(self.feed([detection(490)]))
         self.assertTrue(self.feed([detection(490)]));self.assertEqual(self.t.logical_target_id,identity)
     def test_long_gap_weak_background_cannot_acquire_elsewhere(self):
         self.acquire();stamp=self.t.measurement_time

@@ -49,7 +49,7 @@ class FollowController:
     def _new_centering(self):
         return DampedTrackingController() if self.tracker_backend=='botsort' else SmartTrackingController()
 
-    def observe(self,detections,source_time,now,frame_id,size,settings,image=None):
+    def observe(self,detections,source_time,now,frame_id,size,settings,image=None,visible_candidates=None):
         if self.frame_size is not None and self.frame_size!=size: self.reset()
         if self.frame_size is None: self.tracker=self._new_tracker(size)
         self.frame_size=size
@@ -76,8 +76,11 @@ class FollowController:
         # that proof through search and policy instead of collecting them again.
         recovery_kwargs={}
         if self.tracker_backend=='botsort':
-            recovery_kwargs['verified_recovery']=bool(accepted and t.confirmed and t.identity_event
-                and t.identity_event.get('strong_observations',0)>=3 and 0<=now-source_time<=.25)
+            recovery_kwargs['verified_recovery']=bool(accepted and t.confirmed
+                and t.confirmation_accepted and 0<=now-source_time<=.25)
+            candidates=detections if visible_candidates is None else visible_candidates
+            visible=bool(accepted or any(t._candidate(d,source_time) is not None for d in candidates))
+            self.edge_search.observe_result(source_time,frame_id,visible)
         self.edge_search.observe(accepted,not detections,t.confirmed,
                 t.accepted.box if accepted else None,t.snapshot(source_time),*size,
                 source_time,frame_id,settings,
@@ -116,8 +119,7 @@ class FollowController:
         cmd=self.policy.update(now,k,width,height,mtime if t.confirmed else None,
                     t.measurement_id if t.confirmed else None,raw,settings,
                     abort=stale,accepted=real_fresh,search=search,
-                    verified_recovery=bool(self.tracker_backend=='botsort' and real_fresh and t.identity_event
-                        and t.identity_event.get('strong_observations',0)>=3))
+                    verified_recovery=bool(self.tracker_backend=='botsort' and real_fresh and t.confirmation_accepted))
         box=k.box
         measured_box=None if self.last_accepted is None else self.last_accepted.box
         clipped=measured_box is not None and (measured_box.x1<=.02*width or measured_box.y1<=.02*height

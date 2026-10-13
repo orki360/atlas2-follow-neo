@@ -21,6 +21,7 @@ from .overlay import render_bundle
 from .models import DEFAULT_MODEL, MODEL_NAMES
 from .roi import RoiSettings
 from .roi_view import RoiPanel
+from .distance_view import DistancePanel
 from .manual import ManualControl, MOVEMENT_KEYS, AXES, DEFAULT_AXIS_LIMITS
 from .control_status import control_indicator, acknowledged_command_text, target_status_text
 from .state_diagram import LiveStateDiagram
@@ -175,6 +176,8 @@ class FollowLabWindow:
         self.canvas.bind('<Button-1>',lambda event:self.canvas.focus_set())
         self.canvas.create_text(410,200,text='Connect to the phone video server\n\nMini 4 Pro > RC-N3 > MSDKRemote > this window',
                                 fill='#93a9ba',font=('Segoe UI',15),justify='center',tags='hint')
+        self.distance_text=tk.StringVar(value='Other Mini 4 Pro distance: -- | No calibration')
+        ttk.Label(left,textvariable=self.distance_text,wraplength=950,padding=(8,2),foreground='#6ad5cb').pack(fill='x')
         self.video_stats=tk.StringVar(value='Waiting for live video')
         ttk.Label(left,textvariable=self.video_stats,wraplength=950,padding=8).pack(fill='x')
 
@@ -237,6 +240,18 @@ class FollowLabWindow:
                     textvariable=self.scan_speed_var).grid(row=0,column=1,padx=6)
         ttk.Button(scan_controls,text='Apply / אישור',command=self.apply_scan_speed).grid(row=0,column=2)
         ttk.Label(scan_controls,textvariable=self.scan_speed_note).grid(row=1,column=0,columnspan=3,sticky='w')
+        boost_controls=ttk.LabelFrame(controls_page,text='BOOST entry',padding=6)
+        boost_controls.pack(fill='x',pady=8)
+        self.boost_edge_var=tk.StringVar(value=f"{search_values['boost_edge_zone']*100:g}")
+        self.boost_delay_var=tk.StringVar(value=f"{search_values['boost_entry_delay']*1000:g}")
+        for row,(label,var,lo,hi,step) in enumerate((
+                ('Edge zone per side (%)',self.boost_edge_var,1,50,1),
+                ('Entry delay (ms)',self.boost_delay_var,50,800,10))):
+            ttk.Label(boost_controls,text=label).grid(row=row,column=0,sticky='w')
+            ttk.Spinbox(boost_controls,textvariable=var,from_=lo,to=hi,increment=step,width=7).grid(row=row,column=1,padx=5)
+        ttk.Button(boost_controls,text='Apply / אישור',command=self.apply_boost).grid(row=2,column=0,columnspan=2,sticky='ew',pady=4)
+        self.boost_note=tk.StringVar(value='Requires two new frames without a matching NEO.')
+        ttk.Label(boost_controls,textvariable=self.boost_note,wraplength=290).grid(row=3,column=0,columnspan=2,sticky='w')
         self.search_bar=ttk.LabelFrame(controls_page,text='Search after target loss',padding=8);self.search_bar.pack(fill='x',pady=8)
         for label,key,lo,hi,step in (('Search angle (deg)','search_yaw_degrees',0,360,5),
                                      ('Search time (s)','edge_search_seconds',2,10,.5)):
@@ -303,6 +318,7 @@ class FollowLabWindow:
         ttk.Label(root,textvariable=self.notice,wraplength=1250,padding=10,foreground='#d9b56c').pack(side='bottom',fill='x',before=body)
         self.settings=Settings(**self.loaded_values)
         self.roi_panel=RoiPanel(self,cfg)
+        self.distance_panel=DistancePanel(self,cfg)
         for var in list(self.vars.values())+[self.hold,self.edge_search_on,self.search_auto]: var.trace_add('write',self.mark_dirty)
         self.compute.trace_add('write',lambda *a:self.notice.set('Compute changes take effect on the next Connect.'))
         self.root.after(50,self.refresh)
@@ -319,7 +335,8 @@ class FollowLabWindow:
         data={'schema_version':6,'model_name':self.model.get(),'recording_profile':self.recording_profile.get(),'phone_ip':self.ip.get().strip(),'codec':self.codec.get(),
               'compute':self.compute.get(),'gpu_adapter':self.device.get(),'settings':asdict(self.settings),
               'axis_limits':self.current_axis_limits(),
-              'roi':asdict(getattr(self,'roi_settings',RoiSettings()))}
+              'roi':asdict(getattr(self,'roi_settings',RoiSettings())),
+              'distance_calibration':getattr(self,'distance_calibration',None)}
         tmp=self.config_path.with_suffix('.tmp')
         tmp.write_text(json.dumps(data,indent=2),encoding='utf-8'); tmp.replace(self.config_path)
 
@@ -631,6 +648,19 @@ class FollowLabWindow:
         try: self.focus_check_id=self.root.after_idle(check)
         except tk.TclError: pass
 
+    def apply_boost(self):
+        try:
+            edge=float(self.boost_edge_var.get())/100.
+            delay=float(self.boost_delay_var.get())/1000.
+            updated=replace(self.settings,boost_edge_zone=edge,boost_entry_delay=delay).validate()
+            previous=self.settings;self.settings=updated
+            try:self.save_config()
+            except Exception:self.settings=previous;raise
+            if self.session:self.session.configure_boost(edge,delay)
+            self.boost_note.set(f'Applied: {edge:.0%} per side / {delay*1000:g} ms. Two missing frames required.')
+            self.mark_dirty();self.canvas.focus_set()
+        except Exception as exc:messagebox.showerror('BOOST entry',str(exc))
+
     def apply_scan_speed(self):
         try:
             limit=float(self.scan_speed_var.get())/100.
@@ -779,6 +809,8 @@ class FollowLabWindow:
             self.video_stats.set(f'{size} | Input {source_fps:.1f} FPS | Processed video {video_fps:.1f} FPS | YOLO {inference_fps:.1f} FPS | Decode age {decode_age} | Unanalyzed selected frames {s.inference_skips}')
         roi_panel=getattr(self,'roi_panel',None)
         if roi_panel is not None:roi_panel.update(s.result.get() if s and not self.stopping else None)
+        distance_panel=getattr(self,'distance_panel',None)
+        if distance_panel is not None:distance_panel.update(time.monotonic())
         self.show_control_indicator()
         diagram=getattr(self,'state_diagram',None)
         if diagram is not None:

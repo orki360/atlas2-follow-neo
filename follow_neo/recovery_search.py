@@ -30,12 +30,20 @@ class RecoverySearch:
         self.loss_source=None
         self.rate=SearchHeadingRate();self.yaw_profile=SearchYawProfile()
         self.requested_duration=0.;self.boundaries=set()
-        self.box_edge=False;self.boost_blocked_by=[]
+        self.box_edge=False;self.boost_blocked_by=[];self.last_box=None
+        self.absent_frames=0;self.observation_id=None;self.observation_time=None;self.candidate_visible=False
         self.estimated_direction=0;self.direction_source='none'
         self.first_scan_direction=0;self.boost_exit_reason=None
         self.boost_brake_margin=braking_distance(NOMINAL_YAW_RATE*.6)
         self.centered=True;self.low=self.high=0.;self.span_mode='centered'
         self.heading_missing_since=None
+
+    def observe_result(self,source_time,frame_id,candidate_visible):
+        # Only distinct processed frames count; control ticks cannot fabricate loss.
+        if self.observation_id is not None and (frame_id<=self.observation_id or source_time<=self.observation_time):return
+        self.observation_id=frame_id;self.observation_time=source_time
+        self.candidate_visible=bool(candidate_visible)
+        self.absent_frames=0 if candidate_visible else min(2,self.absent_frames+1)
 
     def end(self,reason):
         self.phase='DONE';self.reason=reason;self.consumed=True;self.verifying=False
@@ -48,7 +56,7 @@ class RecoverySearch:
             self.verifying=True;self.verify_hits+=int(strong);self.verify_last=source_time
             self.source_time=source_time;self.measurement_id=measurement_id
             self.reason='reacquire_verifying'
-            if confirmed and (verified_recovery or self.verify_hits>=3 and source_time-self.verify_since>=.06):
+            if confirmed and (verified_recovery or self.verify_hits>=2 and source_time>self.verify_since):
                 # Seed the next loss from this measurement immediately. A DONE
                 # flag must not shadow COAST if the very next frame is missing.
                 self.reset()
@@ -58,7 +66,9 @@ class RecoverySearch:
         self.eligible=confirmed
         self.centered=.25<=box.cx/width<=.75
         self.edge.observe(accepted,missing,confirmed,box,k,width,height,source_time,measurement_id,settings,strong)
-        self.box_edge=(box.x1<=.08*width if self.edge.direction<0 else box.x2>=.92*width if self.edge.direction>0 else False)
+        self.last_box=(box.x1/width,box.x2/width)
+        self.box_edge=(self.last_box[0]<=settings.boost_edge_zone if self.edge.direction<0 else
+                       self.last_box[1]>=1-settings.boost_edge_zone if self.edge.direction>0 else False)
         evidence=self.edge.evidence
         vx=evidence.get('image_vx',0.);travel=evidence.get('net_travel',0.)
         if (abs(vx)>=.035 and abs(travel)>=.012 and vx*travel>0
@@ -182,32 +192,45 @@ class RecoverySearch:
             if not missing and valid_heading:
                 self.loss_heading=heading['yaw_deg'];self.loss_heading_time=heading['time'];self.loss_heading_source=heading.get('source')
             age=None if self.source_time is None else now-self.source_time
-            if self.eligible and missing and age is not None and age>=settings.search_grace_seconds and not candidate_pending and not bridge_reliable:
+            evidence=self.edge.evidence
+            if self.last_box is not None:
+                self.box_edge=(self.last_box[0]<=settings.boost_edge_zone if self.edge.direction<0 else
+                               self.last_box[1]>=1-settings.boost_edge_zone if self.edge.direction>0 else False)
+            direction_ok=bool(self.edge.direction and self.edge.direction==(self.estimated_direction or -1))
+            observed_loss=(self.absent_frames>=2 and self.observation_time is not None
+                           and 0<=now-self.observation_time<=.25)
+            visible=(self.candidate_visible and self.observation_time is not None
+                     and 0<=now-self.observation_time<=.25)
+            boost_ready=(age is not None and settings.boost_entry_delay<=age<=.80 and observed_loss
+                         and self.box_edge and evidence.get('outward',False) and direction_ok)
+            normal_ready=age is not None and age>=settings.search_grace_seconds and not bridge_reliable
+            if self.eligible and missing and not candidate_pending and not visible and (boost_ready or normal_ready):
                 if age>settings.edge_search_seconds:self.end('search_timeout')
                 elif not valid_heading:self.reason='waiting_heading'
                 else:
                     anchor=self.loss_heading if (self.loss_heading is not None and self.loss_heading_source==heading.get('source')
                         and self.loss_heading_time is not None and abs(self.source_time-self.loss_heading_time)<=.25) else heading['yaw_deg']
                     self.begin(now,settings,heading,anchor)
-                    evidence=self.edge.evidence
-                    at_edge=self.box_edge and evidence.get('outward',False)
-                    self.direction=self.edge.direction if at_edge and age<=.80 and self.edge.direction==self.first_scan_direction else 0
+                    self.direction=self.edge.direction if boost_ready else 0
                     boundary_close=self._boost_boundary_close(yaw_rate) if self.direction else False
                     self.boost_blocked_by=[name for name,ok in (
                         ('last_accepted_box_not_at_edge',self.box_edge),
                         ('no_supported_exit_direction',bool(self.edge.direction)),
                         ('not_outward',evidence.get('outward',False)),
+                        ('entry_delay',age>=settings.boost_entry_delay),
+                        ('two_missing_frames_required',observed_loss),
                         ('loss_older_than_800ms',age<=.80),
-                        ('exit_direction_differs_from_scan',self.edge.direction==self.first_scan_direction),
+                        ('exit_direction_differs_from_scan',direction_ok),
                         ('boundary_braking',not boundary_close)) if not ok]
                     if self.direction and not boundary_close:
                         self.phase='BOOST';self.reason='edge_catchup'
                     else:
                         if boundary_close:self.boost_exit_reason='boundary_braking'
                         self._scan(now,settings.scan_yaw_limit)
-        paused=self.phase in ('BOOST','SCAN') and (self.verifying or candidate_pending or not valid_heading)
+        visible=(self.candidate_visible and self.observation_time is not None and 0<=now-self.observation_time<=.25)
+        paused=self.phase in ('BOOST','SCAN') and (self.verifying or candidate_pending or visible or not valid_heading)
         active=self.phase in ('BOOST','SCAN') and not paused
-        if candidate_pending and self.phase in ('BOOST','SCAN'):self.reason='candidate_verifying'
+        if (candidate_pending or visible) and self.phase in ('BOOST','SCAN'):self.reason='candidate_verifying'
         scan_yaw=0.
         motion=dict(control_reason='inactive',desired_rate_deg_s=None)
         if active and self.phase=='SCAN' and now>=self.reversal_until:
@@ -227,6 +250,8 @@ class RecoverySearch:
             first_scan_direction=self.first_scan_direction or self.estimated_direction,
             search_direction_source=self.direction_source,boost_exit_reason=self.boost_exit_reason,
             boost_max_seconds=BOOST_MAX_SECONDS,boost_blocked_by=list(self.boost_blocked_by),
+            boost_edge_zone=settings.boost_edge_zone,boost_entry_delay=settings.boost_entry_delay,
+            absent_frames=self.absent_frames,candidate_visible=visible,
             boost_until=self.started+BOOST_MAX_SECONDS if self.started is not None else None,
             boost_brake_margin_degrees=self.boost_brake_margin,
             source_time=self.loss_source if self.started is not None else self.source_time,measurement_id=self.measurement_id,

@@ -32,6 +32,22 @@ class Box:
 class Detection:
     box: Box
     confidence: float
+    confirmation: dict | None = None
+
+
+def roi_confirmation_valid(detection, source_time, frame_id):
+    evidence=detection.confirmation
+    if not isinstance(evidence,dict):return False
+    try:
+        values=[evidence[k] for k in ("first_time","time","first_confidence","roi_confidence","threshold")]
+        return bool(all(isinstance(v,(int,float)) and math.isfinite(v) for v in values)
+            and evidence["frame_id"]==frame_id and evidence["first_frame_id"]<frame_id
+            and evidence["time"]==source_time and .1<=evidence.get("max_gap_seconds",.75)<=2.
+            and 0<source_time-evidence["first_time"]<=evidence.get("max_gap_seconds",.75)
+            and evidence["hits"]>=max(2,evidence["required"])
+            and .05<=evidence["threshold"]<=.99
+            and min(evidence["first_confidence"],evidence["roi_confidence"],detection.confidence)>=evidence["threshold"])
+    except (KeyError,TypeError,ValueError):return False
 
 
 @dataclass
@@ -74,6 +90,8 @@ class Settings:
     search_grace_seconds: float = .45
     search_auto_duration: bool = True
     scan_yaw_limit: float = .50
+    boost_edge_zone: float = .20
+    boost_entry_delay: float = .15
     stale_seconds: float = .75
     reacquire_seconds: float = .75
     stop_width: float = .20
@@ -93,6 +111,7 @@ class Settings:
                   'new_track_confidence':(.05,.99), 'inference_fps':(1,60), 'video_fps':(1,60),
                   'edge_search_seconds':(2,10), 'search_yaw_degrees':(0,360),
                   'search_grace_seconds':(.30,1.), 'scan_yaw_limit':(0,1),
+                  'boost_edge_zone':(.01,.50), 'boost_entry_delay':(.05,.80),
                   'stale_seconds':(.1,2), 'reacquire_seconds':(.65,5),
                   'stop_width':(.01,.50), 'yaw_limit':(.1,1),
                   'vertical_limit':(.1,1), 'forward_limit':(0,1),

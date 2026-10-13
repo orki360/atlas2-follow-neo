@@ -3,7 +3,7 @@ import math
 from collections import deque
 from types import SimpleNamespace
 import numpy as np
-from .types import Box, Detection, Kinematics
+from .types import Box, Detection, Kinematics, roi_confirmation_valid
 from .camera_motion import CameraMotion
 from .prediction import project_center
 
@@ -36,6 +36,7 @@ class BoTSORTTracker:
         self.measured_reference=None
         self.candidate_rejections=[]
         self.acquisition=None
+        self.confirmation_accepted=False
         self.acquisition_attempted=False
         self.numerical_event=None;self.numerical_recoveries=0
 
@@ -47,9 +48,10 @@ class BoTSORTTracker:
         expires after 600ms. Only the engine's existing Kalman state is selected.
         """
         old=self.acquisition
-        if old and (source_time-old['time']>.15 or source_time-old['strong_times'][0]>.6):old=None
+        if old and (not old['strong_times'] or source_time-old['time']>.15 or source_time-old['strong_times'][0]>.6):old=None
         self.acquisition=old
-        strong=[d for d in valid if d.confidence>=threshold]
+        proved=lambda d:roi_confirmation_valid(d,source_time,self.last_result_id)
+        strong=[d for d in valid if d.confidence>=threshold or proved(d)]
         nearby=[]
         if old:
             ref=old['box'];w,h=np.maximum(ref[2:],2.)
@@ -69,20 +71,23 @@ class BoTSORTTracker:
             self.association_reason='acquisition_gap' if self.acquisition else 'acquisition_retry' if self.acquisition_attempted else 'waiting_for_acquisition'
             return None
         det=candidates[0]
-        if old is None and det.confidence<threshold:return None
+        if old is None and det.confidence<threshold and not proved(det):return None
         times=[] if old is None else list(old['strong_times'])
         if det.confidence>=threshold:times.append(source_time)
         self.acquisition=dict(box=np.array([det.box.cx,det.box.cy,det.box.width,det.box.height]),
                               time=source_time,strong_times=times)
         self.acquisition_attempted=True;self.hits=len(times)
         self.association_reason='acquisition_verifying'
-        if det.confidence<threshold:return None
+        if det.confidence<threshold and not proved(det):return None
         selected=next((t for t in current if np.allclose(t._tlwh,
             [det.box.x1,det.box.y1,det.box.width,det.box.height],atol=.01)),None)
         if selected is None:return None
+        if proved(det):selected.is_activated=True
         self.target=selected;self.target_id=self.logical_target_id=selected.track_id
-        self.confirmed=len(times)>=2
+        self.confirmed=len(times)>=2 or proved(det)
+        self.confirmation_accepted=self.confirmed
         if self.confirmed:
+            if proved(det):self.hits=det.confirmation['hits']
             self.acquisition=None;self.association_reason='acquisition_confirmed'
         return selected
 
@@ -126,8 +131,8 @@ class BoTSORTTracker:
                 elif age<=RECOVERY_SECONDS:return 1.1
         # After a genuine gap the old image location is not a permanent veto:
         # the single-target application may verify a unique strong returning
-        # candidate anywhere in the frame using three strong coherent samples.
-        if age>=.65 and d.confidence>=self.acquisition_confidence and self.last_detection is not None:
+        # candidate anywhere in the frame using two strong coherent samples.
+        if (age>=.65 and d.confidence>=self.acquisition_confidence or roi_confirmation_valid(d,now,self.last_result_id)) and self.last_detection is not None:
             old=self.last_detection.box
             ratio=np.array([box.width/max(old.width,2),box.height/max(old.height,2)])
             if np.all(ratio>=.2) and np.all(ratio<=5.):
@@ -164,7 +169,7 @@ class BoTSORTTracker:
             if old['step'] is not None and np.linalg.norm(step)>scale*.15:
                 coherent=coherent and float(step@old['step'])>=-scale*scale*.1
         if not coherent:old=None
-        # Three coherent strong return observations fit the existing 600 ms
+        # Two coherent strong return observations fit the existing 600 ms
         # evidence window even at 10 FPS; weak frames cannot confirm relocation.
         evidence_window=.6
         samples=[] if old is None else [s for s in old['samples'] if source_time-s[0]<=evidence_window]
@@ -175,10 +180,12 @@ class BoTSORTTracker:
                           step=step if coherent else None)
         p=self.pending;self.candidate_pending=source_time-self.pause_started<=.8
         self.association_reason='candidate_verifying'
-        strong=p['strong']>=3
-        needed=3 if relocation or strong else 4
+        verified=roi_confirmation_valid(det,source_time,self.last_result_id)
+        strong=p['strong']>=2 or verified
+        needed=2 if relocation or strong else 4
         span=0. if relocation or strong else .10
-        if p['hits']<needed or source_time-p['since']<span or relocation and p['strong']<3:return None
+        if not verified and (p['hits']<needed or source_time-p['since']<span or relocation and p['strong']<2):return None
+        self.confirmation_accepted=bool(verified or strong)
         candidate_track=next((t for t in current if np.allclose(t._tlwh,
                       [det.box.x1,det.box.y1,det.box.width,det.box.height],atol=.01)),None)
         previous_id=self.target_id
@@ -200,14 +207,16 @@ class BoTSORTTracker:
         self.identity_event=dict(previous_track_id=previous_id,track_id=selected.track_id,
                                  candidate_track_id=candidate_id,
                                  logical_target_id=self.logical_target_id,reason='verified_reassociation',
-                                 observations=p['hits'],strong_observations=p['strong'],relocation=relocation)
+                                 observations=det.confirmation['hits'] if verified else p['hits'],
+                                 strong_observations=det.confirmation['hits'] if verified else p['strong'],
+                                 confirmation_source='roi' if verified else 'tracker',relocation=relocation)
         self.association_reason='verified_returning_target' if relocation else 'verified_strong_recovery' if strong else 'verified_weak_recovery'
         self.pending=None;self.candidate_pending=False
         return selected
 
     def update(self,detections,source_time,now,frame_id,start_confidence=.45,
                strong_confidence=.25,continuation_confidence=.10,image=None):
-        self.numerical_event=None
+        self.numerical_event=None;self.confirmation_accepted=False
         try:
             accepted=self._update(detections,source_time,now,frame_id,start_confidence,
                                   strong_confidence,continuation_confidence,image)
@@ -251,7 +260,12 @@ class BoTSORTTracker:
         self.detector_count=len(valid)
         rows=np.array([[d.box.x1,d.box.y1,d.box.x2,d.box.y2,d.confidence] for d in valid],dtype=np.float64).reshape(-1,5)
         target_in_pool=self.target is not None and any(t is self.target for t in engine.tracked_stracks+engine.lost_stracks)
-        tracks=engine.update(rows,image)
+        proved=[d for d in valid if roi_confirmation_valid(d,source_time,frame_id)]
+        if proved:
+            threshold=min(d.confidence for d in proved)
+            engine.args.track_high_thresh=min(strong_confidence,threshold)
+            engine.new_track_thresh=min(start_confidence,threshold)
+        engine.update(rows,image)
         if self.acquisition is not None:
             warp=engine.gmc.last_warp;ref=self.acquisition['box']
             ref[:2]=warp[:,:2]@ref[:2]+warp[:,2]
@@ -270,7 +284,7 @@ class BoTSORTTracker:
             from .vendor.botsort.bot_sort import STrack
             self.target.predict();STrack.multi_gmc([self.target],engine.gmc.last_warp)
         self.last_result_id,self.last_result_time=frame_id,source_time
-        current=[t for t in tracks if t.frame_id==engine.frame_id]
+        current=[t for t in engine.tracked_stracks if t.frame_id==engine.frame_id]
         acquiring=not self.confirmed
         if acquiring:
             selected=self._acquire(valid,current,source_time,max(start_confidence,strong_confidence))
@@ -282,7 +296,10 @@ class BoTSORTTracker:
             self.association_reason='matched_target' if selected is not None else 'no_target_match'
             if selected is None:selected=self._recover(valid,current,source_time,strong_confidence)
             if selected is None:return False
-        if self.association_reason=='matched_target':self.pending=None
+        if self.association_reason=='matched_target':
+            self.pending=None
+            self.confirmation_accepted=any(roi_confirmation_valid(d,source_time,frame_id) and np.allclose(
+                selected._tlwh,[d.box.x1,d.box.y1,d.box.width,d.box.height],atol=.01) for d in valid)
         self.target=selected;self.target_id=selected.track_id
         self.pause_started=self.last_candidate_time=None
         x,y,w,h=map(float,selected._tlwh)
@@ -290,7 +307,7 @@ class BoTSORTTracker:
         self.last_detection=self.accepted
         self.measured_reference=np.array([x+w/2,y+h/2,w,h])
         self.measurement_time=source_time;self.measurement_id=frame_id
-        self.measurement_weak=selected.score<strong_confidence
+        self.measurement_weak=selected.score<strong_confidence and not self.confirmation_accepted
         if not self.measurement_weak:self.last_strong_time=source_time
         if not acquiring:self.hits=min(2,self.hits+1)
         self.history.append((source_time,np.array([x+w/2,y+h/2,w,h]),not self.measurement_weak))

@@ -73,7 +73,7 @@ class CandidateTests(unittest.TestCase):
         return self.tracker.update(ds,self.t,self.t,self.i,.8,.8)
     def test_reference_recovers_when_prediction_drifts_offscreen(self):
         self.tracker.target.mean[0]=1100
-        for i in range(3):accepted=self.feed([detection(250)])
+        for i in range(2):accepted=self.feed([detection(250)])
         self.assertTrue(accepted);self.assertEqual(self.tracker.association_reason,'verified_strong_recovery')
     def test_candidate_survives_one_missing_frame(self):
         self.assertFalse(self.feed([detection(255,.2)]))
@@ -87,7 +87,7 @@ class CandidateTests(unittest.TestCase):
     def test_broad_recovery_accepts_coherent_mixed_confidence(self):
         self.feed([],dt=1.)
         accepted=False
-        for confidence in [.95,.95,.2]:
+        for confidence in [.95,.2]:
             self.assertFalse(self.feed([detection(490,confidence)]))
         accepted=self.feed([detection(490,.95)])
         self.assertTrue(accepted);self.assertEqual(self.tracker.association_reason,'verified_returning_target')
@@ -141,6 +141,7 @@ class SearchTimingTests(unittest.TestCase):
             r.observe(True,False,True,Box(x,320,x+200,390),Kinematics(),1280,720,t,i,s)
             r.update(t,False,False,'APPROACH',False,s,heading(t))
         self.assertLess((x+100)/1280,.9)
+        r.observe_result(t+.3,10,False);r.observe_result(t+.4,11,False)
         d=r.update(t+.5,True,False,'APPROACH',False,s,heading(t+.5))
         self.assertEqual(d['phase'],'BOOST');self.assertEqual(d['direction'],1)
 
