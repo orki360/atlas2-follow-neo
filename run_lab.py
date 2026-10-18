@@ -30,6 +30,8 @@ def check(mode='Auto', device_id=-1, model_name=None):
       'tk':tkinter.TkVersion,'model_sha256':digest,'input':detector.input.shape,
       'output':detector.output.shape,'outputs':[o.shape for o in detector.outputs],
       'model':manifest,'compute':detector.compute_info,
+      'class_names':detector.class_names,'model_class_names':detector.model_class_names,
+      'target_policy':detector.target_policy,
       'recording_encoder':'libx264 available','source_resolution':[1920,1080],'blank_frame_detections':len(result['detections']),
       'warm_inference_ms':timings,'flight_commands_enabled':False}
     (out/'environment_check.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
@@ -42,12 +44,13 @@ def main():
     ap.add_argument('--check',action='store_true')
     ap.add_argument('--compute',choices=['Auto','GPU','CPU'],default='Auto')
     ap.add_argument('--device-id',type=int,default=-1)
-    ap.add_argument('--model',choices=['best.onnx','yolo26s_seg_best_v1.onnx'])
+    from follow_neo.models import MODEL_NAMES
+    ap.add_argument('--model',choices=MODEL_NAMES)
     args=ap.parse_args()
     if args.check: check(args.compute,args.device_id,args.model);return
     import tkinter as tk
     from follow_neo.gui import FollowLabWindow
-    root=tk.Tk();FollowLabWindow(root,ROOT);root.mainloop()
+    root=tk.Tk();FollowLabWindow(root,ROOT,model_name=args.model);root.mainloop()
 
 
 if __name__=='__main__':

@@ -93,6 +93,7 @@ class SearchTest:
             boost_exit_reason=search.get('boost_exit_reason'),transition_pause=transition_pause,
             filtered_yaw_rate_deg_s=search.get('heading_rate_deg_s'),
             search_motion=search.get('search_motion'),boost_max_seconds=search.get('boost_max_seconds'),
+            sectors=search.get('sectors'),scan_yaw_limit=search.get('scan_yaw_limit'),
             boost_brake_margin_degrees=search.get('boost_brake_margin_degrees'),
             pause_remaining_ms=max(0.,(self.search.reversal_until-now)*1000) if transition_pause else 0.,
             heading_degrees=heading['yaw_deg'] if valid else None,

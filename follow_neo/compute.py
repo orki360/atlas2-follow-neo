@@ -1,4 +1,4 @@
-"""Portable ONNX compute selection. No CUDA, TensorRT or vendor SDK imports.
+"""Portable ONNX compute selection for DirectML, CoreML and CPU.
 
 DirectML uses DXGI adapter indices. CoreML permits CPU+GPU; macOS ultimately
 chooses the hardware for CoreML partitions. Profiling verifies EP assignment,

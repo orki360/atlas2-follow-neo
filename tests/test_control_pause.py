@@ -79,6 +79,77 @@ class ChannelPauseTests(unittest.TestCase):
 
 
 class ManualPauseTests(unittest.TestCase):
+    def test_repeated_pause_keeps_detailed_status_stable(self):
+        c=ManualControl('127.0.0.1')
+        c.pause_control('reply error')
+        c.status='Detailed recovery instructions'
+        for _ in range(20):c.pause_control('reply error')
+        self.assertEqual(c.status,'Detailed recovery instructions')
+        c.pause_control('new error')
+        self.assertIn('new error',c.status)
+
+    def test_ambiguous_reply_requires_explicit_enable_and_new_stream(self):
+        from test_manual import Server
+        peers=[];events=[]
+        def connect(address,timeout):
+            peer=Server();peers.append(peer);return peer.connect(address,timeout)
+        c=ManualControl('127.0.0.1',connect,lambda e,d:events.append((e,d)))
+        self.addCleanup(lambda:(c.stop(),c.thread.join(3)))
+        c.update(set());c.enable();c.start();wait_for(lambda:c.enabled)
+        # A focus pause drains its neutral first, so the extra reply is
+        # unambiguously unsolicited; no timing race with an in-flight RC.
+        c.pause_control('Window or settings focus lost')
+        wait_for(lambda:c.transport_status.get('neutral_acknowledged'))
+        peers[0].server.sendall(b'success\r\n')
+        wait_for(lambda:c.transport_status.get('ambiguous'))
+        for _ in range(10):c.update({'up'});time.sleep(.02)
+        self.assertEqual(len(peers),1);self.assertTrue(c.communication_paused)
+        self.assertFalse(c.transport_status.get('neutral_acknowledged'))
+        c.enable()
+        deadline=time.monotonic()+2
+        while (len(peers)<2 or not c.enabled) and time.monotonic()<deadline:
+            c.update({'up'});time.sleep(.01)
+        self.assertEqual(len(peers),2);self.assertTrue(c.enabled)
+        self.assertTrue(any(e=='control_reconnected' for e,d in events))
+        self.assertEqual(peers[1].commands[:3],['rc 0 0 0 0','enable','rc 0 0 0 0'])
+        self.assertFalse(any(cmd.startswith('rc ') and any(map(float,cmd.split()[1:])) for cmd in peers[1].commands))
+        c.update(set());c.update({'up'})
+        wait_for(lambda:any(cmd.startswith('rc ') and float(cmd.split()[-1])>0 for cmd in peers[1].commands))
+
+    def test_q_during_explicit_reconnect_cancels_new_enable(self):
+        from test_manual import Server
+        peers=[];connecting=threading.Event();proceed=threading.Event()
+        def connect(address,timeout):
+            if peers:connecting.set();proceed.wait(2)
+            peer=Server();peers.append(peer);return peer.connect(address,timeout)
+        c=ManualControl('127.0.0.1',connect)
+        self.addCleanup(lambda:(proceed.set(),c.stop(),c.thread.join(3)))
+        c.update(set());c.enable();c.start();wait_for(lambda:c.enabled)
+        c.pause_control('Window or settings focus lost')
+        wait_for(lambda:c.transport_status.get('neutral_acknowledged'))
+        peers[0].server.sendall(b'success\r\n');wait_for(lambda:c.transport_status.get('ambiguous'))
+        c.update(set());c.enable();self.assertTrue(connecting.wait(1))
+        c.release();proceed.set();wait_for(lambda:len(peers)==2)
+        time.sleep(.08)
+        self.assertNotIn('enable',peers[1].commands);self.assertFalse(c.enabled)
+
+    def test_focus_loss_during_explicit_reconnect_keeps_new_stream_paused(self):
+        from test_manual import Server
+        peers=[];connecting=threading.Event();proceed=threading.Event()
+        def connect(address,timeout):
+            if peers:connecting.set();proceed.wait(2)
+            peer=Server();peers.append(peer);return peer.connect(address,timeout)
+        c=ManualControl('127.0.0.1',connect)
+        self.addCleanup(lambda:(proceed.set(),c.stop(),c.thread.join(3)))
+        c.update(set());c.enable();c.start();wait_for(lambda:c.enabled)
+        c.pause_control('Window or settings focus lost')
+        wait_for(lambda:c.transport_status.get('neutral_acknowledged'))
+        peers[0].server.sendall(b'success\r\n');wait_for(lambda:c.transport_status.get('ambiguous'))
+        c.update(set());c.enable();self.assertTrue(connecting.wait(1))
+        c.pause_control('Window or settings focus lost');proceed.set()
+        wait_for(lambda:len(peers)==2);time.sleep(.08)
+        self.assertNotIn('enable',peers[1].commands);self.assertTrue(c.communication_paused)
+
     def start(self,block=True):
         self.peer=AsyncServer(block);self.events=[]
         self.control=ManualControl('127.0.0.1',self.peer.connect,
@@ -110,6 +181,9 @@ class ManualPauseTests(unittest.TestCase):
         self.assertEqual(count,1)
         self.assertFalse(c.keys)
         self.assertTrue(any(e=='control_movement_resumed' and d['automatic'] and not d['explicit_enable'] for e,d in self.events))
+        self.assertEqual(sum(cmd=='enable' for _,cmd in self.peer.commands),1)
+        resumed=next(d for e,d in self.events if e=='control_movement_resumed')
+        self.assertTrue(resumed['authority_retained']);self.assertFalse(resumed['handshake_required'])
         c.update(set());c.update({'down'})
         wait_for(lambda:sum(cmd.startswith('rc ') and float(cmd.split()[-1])<0 for _,cmd in self.peer.commands)>1)
 
@@ -172,6 +246,10 @@ class ManualPauseTests(unittest.TestCase):
         c.decision_provider=lambda:old
         self.assertTrue(self.peer.motion.wait(.25))
         wait_for(lambda:c.communication_paused)
+        # Both ACKs must actually be withheld before injecting exactly two.
+        # Paused is local; flipping block before the peer reads the zero can
+        # auto-ACK it as well and rightly quarantine an extra fake success.
+        wait_for(lambda:len(self.peer.withheld)==2)
         c.update(set());self.peer.block=False
         self.peer.server.sendall(b'success\r\n'*2)
         wait_for(lambda:not c.communication_paused and c.enabled)
@@ -181,7 +259,7 @@ class ManualPauseTests(unittest.TestCase):
                        for _,cmd in self.peer.commands)
         self.assertEqual(motions(),1)
         self.assertEqual(c.mode,'DANCE')
-        c.decision_provider=lambda:decision(measurement_time=time.monotonic())
+        c.decision_provider=lambda:decision(measurement_time=time.monotonic(),video_time=time.monotonic())
         c.update(set());wait_for(lambda:motions()>1)
 
     def test_new_presses_during_pause_also_require_release(self):

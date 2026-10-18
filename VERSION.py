@@ -1,4 +1,4 @@
 """Application version. Update this value for each release."""
 
-VERSION = "12.0.0"
-REVISION = "straight-approach-13"
+VERSION = "13.0.0"
+REVISION = "tracking-recovery-14"

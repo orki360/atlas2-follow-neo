@@ -11,6 +11,7 @@ from follow_neo.types import Settings
 from follow_neo.manual import ManualControl
 from follow_neo.session import FollowSession
 from follow_neo.state_diagram import diagram_snapshot, PAUSED, CURRENT
+from VERSION import REVISION
 from test_manual import Server, wait_for
 from test_search_debug import heading
 
@@ -116,7 +117,7 @@ class BoostScanTests(unittest.TestCase):
             self.assertIn('application_revision',rows[0])
             scan_sample=next(r for r in rows if r['event']=='search_test_sample' and r['phase']=='SCAN')
             self.assertFalse(scan_sample['transition_pause']);self.assertLess(scan_sample['requested_yaw'],0)
-            self.assertEqual(rows[0]['application_revision'],'straight-approach-13')
+            self.assertEqual(rows[0]['application_revision'],REVISION)
             self.assertEqual([r['to_phase'] for r in rows if r['event']=='search_test_transition'],['BOOST','SCAN','DONE'])
             self.assertEqual(rows[-1]['event'],'search_test_summary')
             self.assertFalse(rows[-1]['tail_complete'])

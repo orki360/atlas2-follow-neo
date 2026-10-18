@@ -51,14 +51,20 @@ class SearchMotionTests(unittest.TestCase):
             self.assertEqual(p.update(sign*1,sign*100,10.06),0)
             self.assertLessEqual(abs(p.update(sign*100,0,12)),.201)
 
-    def test_boost_backup_stops_search_and_cannot_restart_without_new_target(self):
+    def test_boost_backup_hands_to_bounded_scan_without_renewing_budget(self):
         test=SearchTest(Settings(search_yaw_degrees=80),heading(10),10,'RIGHT',lambda *a:None,boost=True)
+        until=test.search.until
         for i in range(1,20):
             t=10+i*.1
             self.assertEqual(test.update(heading(t),t)[0],1)
         self.assertEqual(test.update(heading(10+BOOST_MAX_SECONDS),10+BOOST_MAX_SECONDS),(0,0,0,0))
-        self.assertEqual(test.reason,'boost_timeout');self.assertEqual(test.search.phase,'DONE')
-        self.assertEqual(test.update(heading(12.1),12.1),(0,0,0,0))
+        self.assertEqual(test.search.boost_exit_reason,'boost_timeout');self.assertEqual(test.search.phase,'SCAN')
+        self.assertEqual(test.search.until,until)
+        resumed=test.update(heading(12.1),12.1)
+        self.assertGreater(resumed[0],0.);self.assertLessEqual(resumed[0],.101)
+        self.assertEqual(resumed[1:],(0,0,0))
+        self.assertEqual(test.update(heading(until+.01),until+.01),(0,0,0,0))
+        self.assertEqual(test.reason,'search_timeout')
 
     def test_send_gate_stops_old_boost_even_without_new_planner_update(self):
         test=SearchTest(Settings(search_yaw_degrees=80),heading(10),10,'LEFT',lambda *a:None,boost=True)
@@ -82,6 +88,7 @@ class SearchMotionTests(unittest.TestCase):
         d=r.update(11.8,True,False,'APPROACH',False,s,None)
         self.assertFalse(d['active'])
         d=r.update(12.01,True,False,'APPROACH',False,s,heading(12.01))
-        self.assertEqual(d['phase'],'DONE');self.assertEqual(d['reason'],'boost_timeout')
+        self.assertEqual(d['phase'],'SCAN');self.assertEqual(d['boost_exit_reason'],'boost_timeout')
+        self.assertEqual(d['started'],10.);self.assertEqual(d['scan_yaw'],0.)
 
 if __name__=='__main__':unittest.main()

@@ -1,4 +1,4 @@
-"""ONNX adapter: one-class YOLOv8 detection and YOLO26s segmentation.
+"""ONNX adapter: YOLO detection and one/two-class YOLO26s segmentation.
 
 Raw exports use xywh + score, optional 32 mask coefficients, and external NMS.
 No Ultralytics or torch dependency is needed at runtime.
@@ -8,11 +8,12 @@ from __future__ import annotations
 
 import ast
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+from .models import DUAL_CLASS_NAMES, DUAL_MODEL_SOURCE_NAMES, target_policy
 
 
 @dataclass(frozen=True)
@@ -63,7 +64,7 @@ def non_max_suppression(
 
 
 class OnnxDroneDetector:
-    """Load either supported one-class detection or segmentation ONNX export."""
+    """Decode raw class scores, with class-aware NMS and display-only masks."""
 
     def __init__(
         self,
@@ -92,7 +93,13 @@ class OnnxDroneDetector:
         self.outputs = self.session.get_outputs()
         self.output = self.outputs[0]
         self.metadata = self.session.get_modelmeta().custom_metadata_map or {}
-        self.class_names = self._class_names(self.metadata.get("names"))
+        self.model_class_names = self._class_names(self.metadata.get("names"))
+        self.class_names = dict(self.model_class_names)
+        if self.model_path.name in DUAL_MODEL_SOURCE_NAMES:
+            if self.model_class_names != DUAL_MODEL_SOURCE_NAMES[self.model_path.name]:
+                raise RuntimeError('Dual-class model must declare neo at class 0 and minip4 at class 1.')
+            self.class_names = dict(DUAL_CLASS_NAMES)
+        self.target_policy = target_policy(self.model_path.name,self.model_class_names)
         self._validate_contract()
 
     @staticmethod
@@ -114,21 +121,30 @@ class OnnxDroneDetector:
         return result or {0: "drone"}
 
     def _validate_contract(self) -> None:
-        expected = [1, 3, self.settings.input_height, self.settings.input_width]
-        if list(self.input.shape) != expected:
-            raise RuntimeError(
-                f"Unexpected Neo ONNX input {self.input.shape}; expected {expected}"
-            )
+        shape = list(self.input.shape)
+        if (len(shape)!=4 or shape[:2]!=[1,3]
+                or any(not isinstance(n,int) or n<=0 or n%32 for n in shape[2:])):
+            raise RuntimeError(f'Expected fixed [1,3,height,width] input with dimensions divisible by 32; got {shape}')
+        height,width=shape[2:]
+        # The ONNX contract determines spatial dimensions; UI confidence updates
+        # must retain them, including for the rectangular Full HD export.
+        self.settings=replace(self.settings,input_width=width,input_height=height)
+        anchors=sum((height//stride)*(width//stride) for stride in (8,16,32))
+        if sorted(self.class_names) != list(range(len(self.class_names))) or len(self.class_names) not in (1,2):
+            raise RuntimeError('Expected one or two contiguous model classes.')
+        channels = 4 + len(self.class_names)
         shape = list(self.output.shape)
-        self.segmentation = shape in ([1,37,8400],[1,8400,37])
+        self.segmentation = shape in ([1,channels+32,anchors],[1,anchors,channels+32])
         if self.segmentation:
-            if (len(self.outputs)!=2 or list(self.outputs[1].shape)!=[1,32,160,160]
-                    or len(self.class_names)!=1 or self.metadata.get('end2end','False').lower()=='true'):
-                raise RuntimeError('Expected one-class raw segmentation with 32 mask coefficients and prototypes.')
-        elif shape not in ([1, 5, 8400], [1, 8400, 5]):
+            if (len(self.outputs)!=2 or list(self.outputs[1].shape)!=[1,32,height//4,width//4]
+                    or self.metadata.get('end2end','False').lower()=='true'):
+                raise RuntimeError('Expected raw segmentation with 32 mask coefficients and prototypes.')
+        elif shape not in ([1,channels,anchors],[1,anchors,channels]) or len(self.outputs)!=1:
             raise RuntimeError(
-                f"Unsupported ONNX output {shape}; expected one-class detect (5 channels) or segment (37 channels)"
+                f"Unsupported ONNX output {shape}; expected {channels} detection or {channels+32} segmentation channels"
             )
+        if self.model_path.name in DUAL_MODEL_SOURCE_NAMES and not self.segmentation:
+            raise RuntimeError('The dual-class neo model must be a segmentation export.')
 
     def _prepare(self, frame: np.ndarray) -> tuple[np.ndarray, dict[str, float]]:
         import cv2
@@ -159,15 +175,15 @@ class OnnxDroneDetector:
             "source_h": float(source_h),
         }
 
-    @staticmethod
-    def _rows(raw: np.ndarray) -> np.ndarray:
+    def _rows(self, raw: np.ndarray) -> np.ndarray:
         values = np.asarray(raw, dtype=np.float32)
         if values.ndim != 3 or values.shape[0] != 1:
             raise RuntimeError(f"Unexpected Neo inference result: {values.shape}")
         rows = values[0]
-        if rows.shape[0] in (5,37):
+        channels = 4 + len(self.class_names)
+        if rows.shape[0] in (channels,channels+32):
             rows = rows.T
-        if rows.ndim != 2 or rows.shape[1] not in (5,37):
+        if rows.ndim != 2 or rows.shape[1] not in (channels,channels+32):
             raise RuntimeError(f"Unexpected decoded Neo result: {rows.shape}")
         return rows
 
@@ -175,12 +191,18 @@ class OnnxDroneDetector:
         self, raw_output: np.ndarray, transform: dict[str, float], prototypes=None
     ) -> list[dict[str, Any]]:
         rows = self._rows(raw_output)
-        scores = rows[:, 4]
-        valid = np.isfinite(rows).all(axis=1) & (scores >= self.settings.confidence)
+        num_classes = len(self.class_names)
+        class_scores = rows[:,4:4+num_classes]
+        class_ids = np.argmax(class_scores,axis=1)
+        scores = np.max(class_scores,axis=1)
+        valid = (np.isfinite(rows).all(axis=1) & (scores >= self.settings.confidence)
+                 & ((class_scores>=0.) & (class_scores<=1.)).all(axis=1))
+        class_ids = class_ids[valid]
         rows, scores = rows[valid], scores[valid]
         if rows.size == 0:
             return []
         valid_size = (rows[:, 2] > 0.0) & (rows[:, 3] > 0.0)
+        class_ids = class_ids[valid_size]
         rows, scores = rows[valid_size], scores[valid_size]
         if rows.size == 0:
             return []
@@ -192,14 +214,20 @@ class OnnxDroneDetector:
                 rows[:, 1] + rows[:, 3] * 0.5,
             )
         ).astype(np.float32)
-        kept = non_max_suppression(
-            boxes, scores, self.settings.iou_threshold, self.settings.max_detections
-        )
+        kept = []
+        for class_id in np.unique(class_ids):
+            indices = np.flatnonzero(class_ids == class_id)
+            retained = non_max_suppression(boxes[indices],scores[indices],
+                                          self.settings.iou_threshold,self.settings.max_detections)
+            kept.extend(int(indices[index]) for index in retained)
+        # Cap each class separately so many MINI boxes cannot crowd neo out.
+        kept = sorted(kept,key=lambda index:float(scores[index]),reverse=True)
         scale = transform["scale"]
         pad_x, pad_y = transform["pad_x"], transform["pad_y"]
         source_w, source_h = transform["source_w"], transform["source_h"]
         detections: list[dict[str, Any]] = []
         for index in kept:
+            class_id = int(class_ids[index])
             x1, y1, x2, y2 = boxes[index]
             x1 = float(np.clip((x1 - pad_x) / scale, 0.0, source_w - 1.0))
             y1 = float(np.clip((y1 - pad_y) / scale, 0.0, source_h - 1.0))
@@ -211,29 +239,30 @@ class OnnxDroneDetector:
                 {
                     "box": [x1, y1, x2, y2],
                     "confidence": float(scores[index]),
-                    "class_id": 0,
-                    "class_name": "drone_candidate",
-                    "model_class_name": self.class_names.get(0, "drone"),
+                    "class_id": class_id,
+                    "class_name": self.class_names[class_id],
+                    "model_class_name": getattr(self,'model_class_names',self.class_names)[class_id],
+                    "class_scores": rows[index,4:4+num_classes].tolist(),
                 }
             )
             # Masks are display-only. Keep the detector BBOX as the tracker /
             # distance contract; never replace its width with polygon area.
-            if prototypes is not None and rows.shape[1]==37 and len(detections)<=3:
-                detections[-1]['segments']=self._segments(rows[index,5:],prototypes,boxes[index],transform)
+            if prototypes is not None and rows.shape[1]==4+num_classes+32 and len(detections)<=3:
+                detections[-1]['segments']=self._segments(rows[index,4+num_classes:],prototypes,boxes[index],transform)
         return detections
 
-    @staticmethod
-    def _segments(coefficients,prototypes,box,transform):
+    def _segments(self,coefficients,prototypes,box,transform):
         import cv2
+        height,width=self.settings.input_height//4,self.settings.input_width//4
         proto=np.asarray(prototypes,dtype=np.float32)
-        if proto.shape==(1,32,160,160):proto=proto[0]
-        if proto.shape!=(32,160,160) or not np.isfinite(proto).all():
+        if proto.shape==(1,32,height,width):proto=proto[0]
+        if proto.shape!=(32,height,width) or not np.isfinite(proto).all():
             raise RuntimeError('Invalid segmentation prototypes')
         # Threshold logits at zero (sigmoid > .5), only within the kept box.
         logits=np.einsum('c,chw->hw',coefficients,proto,optimize=False)
-        mask=np.zeros((160,160),np.uint8)
+        mask=np.zeros((height,width),np.uint8)
         x1,y1,x2,y2=box/4
-        xs=np.arange(160)[None,:];ys=np.arange(160)[:,None]
+        xs=np.arange(width)[None,:];ys=np.arange(height)[:,None]
         mask[(logits>0)&(xs>=x1)&(xs<x2)&(ys>=y1)&(ys<y2)]=255
         contours,_=cv2.findContours(mask,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
         result=[]
@@ -258,6 +287,8 @@ class OnnxDroneDetector:
         finished = time.perf_counter()
         return {
             "detections": detections,
+            "input_size": [self.settings.input_width,self.settings.input_height],
+            "input_transform": transform,
             "preprocess_ms": (prepared - started) * 1000.0,
             "inference_ms": (inferred - prepared) * 1000.0,
             "postprocess_ms": (finished - inferred) * 1000.0,

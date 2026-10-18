@@ -56,6 +56,11 @@ def control_indicator(control, rejection='', selected=None):
         detail = control.dance_status
         if detail.startswith('Keyboard override'):
             return 'DANCE ON - KEYBOARD OVERRIDE', detail, '#234f86'
+        if detail.startswith('Nano hold /'):
+            return 'DANCE ON - NANO HOLD', detail+' | Autonomous motion blocked', '#76550d'
+        if detail.startswith('Nano bridge /'):
+            label='NANO BOUNDED FORWARD' if detail.endswith('bounded forward') else 'NANO YAW ONLY'
+            return 'DANCE ON - '+label, detail+' | Waiting for renewed YOLO', '#76550d'
         if detail.startswith('Search /'):
             return 'DANCE ON - SEARCH / YAW 100%', detail + ' | Q / Esc: release', '#76550d'
         if detail.startswith('Scan /'):

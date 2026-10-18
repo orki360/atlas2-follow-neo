@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import Mock
 from follow_neo.gui import FollowLabWindow
 from follow_neo.manual import ManualControl
+from follow_neo.models import DEFAULT_MODEL
 
 
 class FocusTransitionTests(unittest.TestCase):
@@ -16,6 +17,7 @@ class FocusTransitionTests(unittest.TestCase):
         w.manual.enabled=w.manual.wanted=True
         w.pressed={'w'}; w.manual.update({'w'})
         w.session=Mock(model_error=None,model_info={'ready':True})
+        w.session.model_path=Path(DEFAULT_MODEL)
         w.session.receiver.state='STREAMING'; w.session.receiver.host='127.0.0.1'
         w.stopping=False; w.notice=Mock(); w.show_control_indicator=Mock()
         w.dance_selected=False

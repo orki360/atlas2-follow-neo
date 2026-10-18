@@ -54,9 +54,12 @@ def diagram_snapshot(decision, control, selected, connected, now, error=None):
     elif not active:status='CONNECTED | CONTROL NOT ENABLED'
     elif testing:status=('SEARCH TEST COMPLETE' if test.get('finished') else 'SEARCH TEST SETTLING' if test.get('tail') else 'SEARCH TEST')+' | DANCE OFF'
     elif control.get('keyboard_override'):status='KEYBOARD OVERRIDE'
+    elif dance and decision.get('nano_authority')=='blocked':status='DANCE | NANO MOTION BLOCKED'
     elif dance:status='DANCE CONTROL ENABLED'
     else:status='MANUAL | DANCE OFF'
     color=ERROR if state=='ERROR' else PAUSED if paused else CURRENT if active and dance and not control.get('keyboard_override') else PREVIEW
+    if dance and decision.get('nano_authority')=='blocked':
+        color=PAUSED;reason='Nano hold: '+str(decision.get('nano_block_reason','waiting'))
     if state in ('WAIT_VIDEO','SEARCH_PAUSED'):color=PAUSED
     held=bool(search.get('paused') or search.get('verifying') or state in ('SEARCH_PAUSED','REACQUIRE'))
     phase_color=PAUSED if held or paused else color

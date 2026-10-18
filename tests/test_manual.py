@@ -85,6 +85,8 @@ class ManualTests(unittest.TestCase):
         control.update({'up'}); control.enable()
         wait_for(lambda: control.enabled)
         wait_for(lambda: control.communication_paused)
+        # The local paused flag can precede the peer reading/ACKing the zero.
+        wait_for(lambda: control.transport_status.get('neutral_acknowledged'))
         self.assertTrue(control.wanted)
         self.assertTrue(control.thread.is_alive())
         self.assertEqual(control.keys, set())

@@ -73,7 +73,7 @@ class SearchYawProfile:
     def reset(self,now,command=0.):
         self.command=command;self.time=now;self.holding=False;self.diagnostics={}
 
-    def update(self,distance,rate,now):
+    def update(self,distance,rate,now,*,max_yaw=1.,arrival_yaw=0.):
         side=1 if distance>0 else -1
         closing=max(0.,side*(rate or 0.))
         # Invert distance = response_delay * speed + speed^2 / (2 * decel).
@@ -81,7 +81,8 @@ class SearchYawProfile:
         # Subtracting that tolerance here would asymptotically stop short of it.
         usable=abs(distance)
         ad=BRAKE_DECELERATION*BRAKE_RESPONSE_SECONDS
-        desired=min(NOMINAL_YAW_RATE,max(0.,math.sqrt(ad*ad+2*BRAKE_DECELERATION*usable)-ad))
+        desired=min(NOMINAL_YAW_RATE*max_yaw,max(NOMINAL_YAW_RATE*arrival_yaw,
+                    math.sqrt(ad*ad+2*BRAKE_DECELERATION*usable)-ad))
         raw=max(0.,min(desired/NOMINAL_YAW_RATE,(1.5*desired-.5*closing)/NOMINAL_YAW_RATE))
         if raw<=0:self.holding=True
         elif self.holding and closing<=max(5.,desired-5.):self.holding=False
@@ -91,6 +92,7 @@ class SearchYawProfile:
         magnitude=min(raw,previous+YAW_RISE_PER_SECOND*dt) if raw>previous else raw
         self.command=side*magnitude;self.time=now
         self.diagnostics=dict(desired_rate_deg_s=side*desired,closing_rate_deg_s=closing,
+            yaw_limit=max_yaw,arrival_yaw=arrival_yaw,
             braking_distance_degrees=braking_distance(closing),raw_yaw=side*raw,
             control_reason='brake_hold' if self.holding else 'accelerating' if magnitude<raw else 'braking' if raw<1 else 'turning')
         return self.command

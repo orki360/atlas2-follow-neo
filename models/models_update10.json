@@ -1,4 +1,44 @@
 {
+  "yolo26s_seg_best_mp4_v2.onnx": {
+    "sha256": "3d345138bbf44aa81b8574ec88e9a838d972fd085678278abc85c3d6cbc2023c",
+    "task": "segment",
+    "classes": {"0": "neo", "1": "MINI PRO4"},
+    "source_classes": {"0": "DJI-Neo-Segmentation-Manual", "1": "minip4"},
+    "input_shape": [1,3,640,640],
+    "tracking_class_id": 0
+  },
+  "yolo26s_seg_best_mp4_960x544_v2_fp32.onnx": {
+    "sha256": "03c9ebed9e5d958373a206326a38c0fa6d11e21ee285a5dc16faf9e7af36ecf5",
+    "task": "segment",
+    "classes": {"0": "neo", "1": "MINI PRO4"},
+    "source_classes": {"0": "NEO", "1": "MINI PRO4"},
+    "input_shape": [1,3,544,960],
+    "tracking_class_id": 0
+  },
+  "neo_minipro4_yolo26s_seg_960x544_v6.onnx": {
+    "sha256": "d20463626e6cf85e1dab11c1c35cfef6c1532897bc1089beb0732c19bf3f1a6c",
+    "task": "segment",
+    "classes": {"0": "neo", "1": "MINI PRO4"},
+    "source_classes": {"0": "NEO", "1": "MINI PRO4"},
+    "input_shape": [1,3,544,960],
+    "tracking_class_id": 0
+  },
+  "neo_minipro4_yolo26s_seg_best_full_ap_960x544_v6.onnx": {
+    "sha256": "3f16e0bd050a852479d8165caf0d0ec639f3829c10740e9206bfb49d28b6b4de",
+    "task": "segment",
+    "classes": {"0": "neo", "1": "MINI PRO4"},
+    "source_classes": {"0": "NEO", "1": "MINI PRO4"},
+    "input_shape": [1,3,544,960],
+    "tracking_class_id": 0
+  },
+  "yolo26s_seg_best_mp4_1920x1080_v2.onnx": {
+    "sha256": "21991170607515d6a42de2408710d1683182a77dc2050049e9aee1181c44c4a2",
+    "task": "segment",
+    "classes": {"0": "neo", "1": "MINI PRO4"},
+    "source_classes": {"0": "NEO", "1": "MINI PRO4"},
+    "input_shape": [1,3,1088,1920],
+    "tracking_class_id": 0
+  },
   "best.onnx": {
     "sha256": "20c8821eee5eae466023f6ecc7355f408523b63ec1bb9fbb52906aa5d8345c3c",
     "task": "detect"

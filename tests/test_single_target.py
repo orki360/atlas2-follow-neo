@@ -33,7 +33,7 @@ class SingleTargetTests(unittest.TestCase):
         self.assertIsNone(self.tracker.target_id);self.assertEqual(self.tracker.hits,1)
         self.feed([detection(.95,203)]);self.assertTrue(self.tracker.confirmed)
     def test_evidence_expires_after_detector_gap(self):
-        self.feed([detection()]);self.feed([],dt=.2)
+        self.feed([detection()]);self.feed([],dt=.35)
         self.assertIsNone(self.tracker.acquisition)
         self.feed([detection()]);self.assertFalse(self.tracker.confirmed)
         self.feed([detection()]);self.assertTrue(self.tracker.confirmed)
@@ -81,5 +81,5 @@ class SingleTargetTests(unittest.TestCase):
     def test_gui_reports_verifying_and_reacquiring(self):
         self.feed([detection()]);d=dict(tracking=self.tracker.diagnostics())
         self.assertIn('Verifying target',target_status_text(d))
-        self.feed([],dt=.2);d=dict(tracking=self.tracker.diagnostics())
+        self.feed([],dt=.35);d=dict(tracking=self.tracker.diagnostics())
         self.assertEqual(target_status_text(d),'Reacquiring target')

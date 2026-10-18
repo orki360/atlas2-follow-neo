@@ -18,7 +18,7 @@ from . import __version__, __revision__
 from .types import Settings, settings_from_config
 from .session import FollowSession
 from .overlay import render_bundle
-from .models import DEFAULT_MODEL, LEGACY_MODEL
+from .models import DEFAULT_MODEL,MODEL_NAMES,DUAL_MODELS,model_from_config
 from .manual import ManualControl, MOVEMENT_KEYS, AXES, DEFAULT_AXIS_LIMITS
 from .control_status import control_indicator, acknowledged_command_text, target_status_text
 from .state_diagram import LiveStateDiagram
@@ -62,7 +62,7 @@ def safe_focus_widget(root):
 
 
 class FollowLabWindow:
-    def __init__(self,root,base):
+    def __init__(self,root,base,model_name=None):
         self.root=root; self.base=Path(base); self.session=None; self.stopping=False
         self.manual=None; self.pressed=set(); self.key_releases={}
         self.key_state_reader=physical_movement_keys if sys.platform=='win32' else None
@@ -119,9 +119,10 @@ class FollowLabWindow:
         self.device_picker=ttk.Spinbox(compute_bar,textvariable=self.device,from_=-1,to=31,width=4)
         self.device_picker.pack(side='left',padx=8)
         ttk.Label(compute_bar,text='Model').pack(side='left',padx=(8,0))
-        self.model=tk.StringVar(value=cfg.get('model_name',DEFAULT_MODEL))
-        if self.model.get() not in (DEFAULT_MODEL,LEGACY_MODEL):self.model.set(DEFAULT_MODEL)
-        self.model_picker=ttk.Combobox(compute_bar,textvariable=self.model,values=[DEFAULT_MODEL,LEGACY_MODEL],state='readonly',width=27)
+        self.model=tk.StringVar(value=model_name or model_from_config(cfg))
+        if self.model.get() not in MODEL_NAMES:self.model.set(DEFAULT_MODEL)
+        self.model_picker=ttk.Combobox(compute_bar,textvariable=self.model,values=MODEL_NAMES,
+                                       state='readonly',width=max(44,max(map(len,MODEL_NAMES))))
         self.model_picker.pack(side='left',padx=6)
         self.recording_profile=tk.StringVar(value=cfg.get('recording_profile','Auto'))
         if self.recording_profile.get() not in ('Auto','1080p','720p'):self.recording_profile.set('Auto')
@@ -264,6 +265,9 @@ class FollowLabWindow:
         self.loaded_values=values
         self.vars=dict(self.search_vars)
         controls=[('YOLO acquire confidence','confidence',.05,.95,.05),('New track confidence','new_track_confidence',.05,.99,.05),
+                  ('BoT match cost (higher = looser)','botsort_match_threshold',.10,.90,.01),
+                  ('BoT weak match cost','botsort_low_match_threshold',.10,.70,.01),
+                  ('BoT tentative match cost','botsort_unconfirmed_match_threshold',.10,.85,.01),
                   ('NMS IoU','nms_iou',.05,.95,.05),('Video processing FPS','video_fps',1,60,1),
                   ('Inference target FPS','inference_fps',1,60,1),
                   ('Result stale (seconds)','stale_seconds',.1,2,.05),
@@ -275,23 +279,81 @@ class FollowLabWindow:
             ttk.Label(settings,text=label).grid(row=row,column=0,sticky='w',pady=3)
             self.vars[key]=tk.StringVar(value=f'{values[key]*(100 if key in self.percent else 1):g}')
             ttk.Spinbox(settings,textvariable=self.vars[key],from_=lo,to=hi,increment=step,width=7).grid(row=row,column=1,padx=(8,0))
+        motion_page,self.motion_tab=page('Motion')
+        self.motion_controls={}
+        self.percent.update(('forward_window_width','forward_window_height','forward_soft_zone',
+                             'forward_yaw_demand_limit','search_forward_fraction','search_side_fraction',
+                             'scan_yaw_limit','scan_observation_yaw'))
+        motion_groups=(('Forward window / centering',(
+            ('Window width (%)','forward_window_width',20,85,5),
+            ('Window height (%)','forward_window_height',20,80,5),
+            ('Soft edge zone (%)','forward_soft_zone',10,50,5),
+            ('Yaw demand threshold (%)','forward_yaw_demand_limit',10,55,5),
+            ('Yaw rate ceiling (deg/s)','forward_yaw_rate_limit',15,65,5),
+            ('Forward rise (per second)','forward_rise_per_second',.5,4,.25),
+            ('Nano max age (seconds)','nano_visual_max_age_seconds',.04,.10,.01))),
+            ('Brief search translation / observation',(
+            ('Source-time motion budget (s)','search_translation_seconds',.55,1.20,.05),
+            ('Forward share of axis cap (%)','search_forward_fraction',0,35,5),
+            ('Side share of axis cap (%)','search_side_fraction',0,20,5),
+            ('Minimum look (seconds)','search_look_seconds',.10,.50,.05),
+            ('Settling confirmation (s)','search_settle_seconds',.05,.20,.01))),
+            ('Scan speed / observation',(
+            ('Observation interval (deg)','scan_observation_degrees',1,None,5),
+            ('Scan yaw limit (%)','scan_yaw_limit',10,100,5),
+            ('Observation yaw limit (%)','scan_observation_yaw',0,100,1))))
+        for title,items in motion_groups:
+            group=ttk.LabelFrame(motion_page,text=title,padding=8);group.pack(fill='x',pady=5)
+            for row,(label,key,lo,hi,step) in enumerate(items):
+                ttk.Label(group,text=label).grid(row=row,column=0,sticky='w',pady=3)
+                self.vars[key]=tk.StringVar(value=f'{values[key]*(100 if key in self.percent else 1):g}')
+                spin=(ttk.Entry(group,textvariable=self.vars[key],width=9) if hi is None else
+                      ttk.Spinbox(group,textvariable=self.vars[key],from_=lo,to=hi,increment=step,width=7))
+                spin.grid(row=row,column=1,padx=(6,0));self.motion_controls[key]=spin
+        self.scan_observation_mode=tk.StringVar(value=values['scan_observation_mode'])
+        ttk.Label(group,text='Observation mode').grid(row=len(items),column=0,sticky='w',pady=3)
+        self.scan_observation_picker=ttk.Combobox(group,textvariable=self.scan_observation_mode,
+            values=('stop','slowdown'),state='readonly',width=9)
+        self.scan_observation_picker.grid(row=len(items),column=1,padx=(6,0))
+        ttk.Label(motion_page,text='Interval: type any angle >= 1 deg, including 360.\nApplies to scans >= 120 deg; arc ends still stop.\nFor a 360-deg sweep at up to 60%, set Scan yaw limit to 60%.\nObservation yaw (0-100%) is capped by Scan yaw limit; 0 stops.\nSlowdown uses a speed-dependent window and rate ceiling.\nBoth modes require fresh heading and two new YOLO results.\nPercent is command strength, not deg/s. BOOST is separate.',
+                  wraplength=315,foreground='#8cbbb8').pack(anchor='w',pady=5)
+        self.forward_require_nano=tk.BooleanVar(value=values['forward_require_nano'])
+        ttk.Checkbutton(motion_page,text='Require Nano for wider forward envelope',
+                        variable=self.forward_require_nano).pack(anchor='w',pady=5)
+        self.coordinated_turns=tk.BooleanVar(value=values['coordinated_turns'])
+        ttk.Checkbutton(motion_page,text='Continuous forward during verified turns',
+                        variable=self.coordinated_turns).pack(anchor='w',pady=5)
+        ttk.Label(motion_page,text='Verified turns: yaw demand slows forward motion.\nUnchecked: yaw demand is a stop ceiling.\nWindow, actual yaw rate and distance limits still stop.',
+                  wraplength=315,foreground='#8cbbb8').pack(anchor='w',pady=5)
+        ttk.Label(motion_page,text='Unchecked: fresh, sustained YOLO can use the window.\nHard background / identity vetoes always apply.\nGrey corners mark the outer target-centre limits.\nSearch translation expires from the real YOLO frame;\nit does not run for the entire scan.',
+                  wraplength=315,foreground='#8cbbb8').pack(anchor='w',pady=5)
+        ttk.Button(motion_page,text='Apply motion / save',command=self.apply).pack(fill='x',pady=5)
         self.hold=tk.BooleanVar(value=bool(values['follow_and_hold']))
         ttk.Checkbutton(settings,text='Continuous Dance / Follow & Hold',variable=self.hold).grid(row=len(controls),columnspan=2,sticky='w',pady=6)
+        self.nano_mode=tk.StringVar(value=values['nano_mode'])
+        ttk.Label(settings,text='Nano: off / shadow / guarded').grid(row=len(controls)+1,column=0,sticky='w')
+        ttk.Combobox(settings,textvariable=self.nano_mode,values=('off','shadow','guarded'),
+                     state='readonly',width=9).grid(row=len(controls)+1,column=1)
         self.edge_search_on=tk.BooleanVar(value=bool(values['edge_search_enabled']))
         ttk.Checkbutton(self.search_bar,text='Lost-target recovery: BOOST / scan',variable=self.edge_search_on).pack(anchor='w',pady=4)
         self.search_auto=tk.BooleanVar(value=bool(values['search_auto_duration']))
         ttk.Checkbutton(self.search_bar,text='Auto scan time for angle (up to 35 s)',variable=self.search_auto).pack(anchor='w',pady=4)
         ttk.Button(settings,text='Apply / keep target',command=self.apply).grid(row=len(controls)+2,columnspan=2,sticky='ew')
         self.settings_note=tk.StringVar(value='Settings ready')
+        ttk.Label(motion_page,textvariable=self.settings_note,wraplength=315,foreground='#d9b56c').pack(anchor='w')
         ttk.Label(settings,textvariable=self.settings_note,foreground='#d9b56c',wraplength=285).grid(row=len(controls)+3,columnspan=2,sticky='w',pady=6)
         ttk.Label(settings,text='Scan reverses at each angle boundary until timeout.\n0 deg disables recovery. Heading uses TCP 9997.\nTarget loss keeps Dance ON; reacquisition is automatic.',
                   foreground='#8cbbb8',wraplength=285).grid(row=len(controls)+4,columnspan=2,sticky='w')
+        ttk.Label(settings,text='BoT costs: higher = looser matching.\nDefaults: primary 0.80 / weak 0.50 / tentative 0.70.\nIdentity, freshness and Nano background guards still apply.',
+                  foreground='#8cbbb8',wraplength=285).grid(row=len(controls)+5,columnspan=2,sticky='w',pady=5)
+        ttk.Label(settings,text='Nano shadow: display / logs only.\nGuarded: bounded visual continuity; real YOLO\nrenews identity. Search remains independently gated.',
+                  foreground='#d9b56c',wraplength=285).grid(row=len(controls)+5,columnspan=2,sticky='w',pady=5)
         ttk.Button(right,text='Reset target / spacing',command=self.reset).pack(fill='x',pady=2)
         ttk.Button(right,text='Open session logs',command=self.open_logs).pack(fill='x',pady=2)
         self.notice=tk.StringVar(value='Enter the IP shown in MSDKRemote. Start its Video Server first.')
         ttk.Label(root,textvariable=self.notice,wraplength=1250,padding=10,foreground='#d9b56c').pack(side='bottom',fill='x',before=body)
         self.settings=Settings(**self.loaded_values)
-        for var in list(self.vars.values())+[self.hold,self.edge_search_on,self.search_auto]: var.trace_add('write',self.mark_dirty)
+        for var in list(self.vars.values())+[self.hold,self.edge_search_on,self.search_auto,self.nano_mode,self.forward_require_nano,self.coordinated_turns,self.scan_observation_mode]: var.trace_add('write',self.mark_dirty)
         self.compute.trace_add('write',lambda *a:self.notice.set('Compute changes take effect on the next Connect.'))
         self.root.after(50,self.refresh)
 
@@ -299,12 +361,16 @@ class FollowLabWindow:
         data=asdict(self.settings)
         for key,var in self.vars.items(): data[key]=float(var.get())/(100 if key in self.percent else 1)
         data['follow_and_hold']=self.hold.get()
+        data['nano_mode']=self.nano_mode.get()
+        data['forward_require_nano']=self.forward_require_nano.get()
+        data['coordinated_turns']=self.coordinated_turns.get()
+        data['scan_observation_mode']=self.scan_observation_mode.get()
         data['edge_search_enabled']=self.edge_search_on.get()
         data['search_auto_duration']=self.search_auto.get()
         return Settings(**data).validate()
 
     def save_config(self):
-        data={'schema_version':6,'model_name':self.model.get(),'recording_profile':self.recording_profile.get(),'phone_ip':self.ip.get().strip(),'codec':self.codec.get(),
+        data={'schema_version':8,'model_name':self.model.get(),'recording_profile':self.recording_profile.get(),'phone_ip':self.ip.get().strip(),'codec':self.codec.get(),
               'compute':self.compute.get(),'gpu_adapter':self.device.get(),'settings':asdict(self.settings),
               'axis_limits':self.current_axis_limits()}
         tmp=self.config_path.with_suffix('.tmp')
@@ -379,7 +445,8 @@ class FollowLabWindow:
             except OSError: socket.inet_pton(socket.AF_INET6,host)
         except OSError:
             self.notice.set('Enter a numeric Phone IP before connecting keyboard.'); return
-        self.manual=ManualControl(host,on_event=self.log_control,decision_provider=self.dance_decision)
+        self.manual=ManualControl(host,on_event=self.log_control,decision_provider=self.dance_decision,
+                                  require_target_policy=True)
         self.manual.set_axis_limits(self.current_axis_limits())
         if self.dance_selected: self.manual.start_dance()
         self.manual.start()
@@ -414,6 +481,12 @@ class FollowLabWindow:
 
     def toggle_dance(self):
         self.dance_rejection=''
+        active_model=self.session.model_path.name if self.session else self.model.get()
+        if not self.dance_selected and active_model not in DUAL_MODELS:
+            self.dance_rejection='Dance requires a dual-class neo model: '+', '.join(DUAL_MODELS)+'. Reconnect video with the selected model.'
+            self.notice.set(self.dance_rejection)
+            self.log_control('dance_rejected',{'reason':'model_not_neo_dual_class','model_name':active_model})
+            self.show_control_indicator();return
         self.dance_selected=not self.dance_selected
         self.dance_terminal_seen=False
         self.pressed.clear()
@@ -656,7 +729,10 @@ class FollowLabWindow:
         if self.last_image is None or self.last_frame is None: return
         path=self.session.output if self.session else self.base/'logs'; path.mkdir(exist_ok=True)
         stamp=time.time_ns(); out=path/f'snapshot_{stamp}.png'
-        success,encoded=cv2.imencode('.png',self.last_image)
+        capture=self.last_image
+        if getattr(self,'last_render',None):
+            capture,_,_=render_bundle(*self.last_render,now=(self.last_meta or {}).get('rendered_at'))
+        success,encoded=cv2.imencode('.png',capture)
         if success:
             out.write_bytes(encoded.tobytes())
             meta=self.last_meta or {}
@@ -667,10 +743,11 @@ class FollowLabWindow:
         s=self.session
         if (s and self.manual and not self.stopping and self.manual.host==s.receiver.host
                 and not s.reset_event.is_set() and not s.model_error and s.receiver.state=='STREAMING'):
-            return s.decision.get()
+            return s.control_decision() if isinstance(s,FollowSession) else s.decision.get()
         return None
 
     def refresh(self):
+        refresh_started=time.monotonic()
         diagram_decision=None
         self.reconcile_keyboard()
         if self.manual and not self.manual.thread.is_alive() and self.pressed:
@@ -679,9 +756,11 @@ class FollowLabWindow:
             decision=self.dance_decision()
             if self.finish_terminal_dance(decision): decision=None
             self.manual.update(self.pressed & MOVEMENT_KEYS,decision)
-            self.manual_status.set(self.manual.status)
             self.manual_button.configure(text='Disconnect keyboard' if self.manual.thread.is_alive() else 'Connect keyboard')
             snapshot=self.manual.control_snapshot();test=snapshot.get('search_test')
+            transport=snapshot.get('transport') or {};ack=transport.get('last_ack')
+            ack_text=(f" | ACK {ack['ack_ms']:.0f} ms | late RC ACKs {transport.get('late_rc_ack_count',0)}" if ack else '')
+            self.manual_status.set(self.manual.status+ack_text)
             if test:
                 self.search_test_status.set(f"{'DONE' if test.get('finished') else 'SETTLING' if test.get('tail') else 'RUNNING'} | {test.get('reason','starting')}\n"
                     f"{test.get('test_kind','SCAN_ONLY')} / {test.get('phase','--')}\n"
@@ -691,6 +770,8 @@ class FollowLabWindow:
         s=self.session
         if s and not self.stopping:
             now=time.monotonic(); frame=s.receiver.frames.get(); analysis=s.analysis.get(); decision=s.decision.get()
+            if isinstance(s,FollowSession):
+                analysis=s.presentation_analysis();decision=s.control_decision()
             decision=s.with_control_status(decision)
             diagram_decision=decision
             self.rates.append((now,s.receiver.count,s.inference_count,s.receiver.processed_count))
@@ -698,9 +779,15 @@ class FollowLabWindow:
             video_fps=(s.receiver.processed_count-self.rates[0][3])/elapsed
             inference_fps=(s.inference_count-self.rates[0][2])/elapsed
             self.state.set(s.receiver.state if not decision else target_status_text(decision))
-            if s.receiver.error: self.state.set('VIDEO ERROR'); self.notice.set(s.receiver.error+' Disconnect, then retry.')
+            if s.receiver.error:
+                retrying=s.receiver.state in ('RECONNECTING','WAITING_VIDEO')
+                self.state.set('VIDEO RECONNECTING' if retrying else 'VIDEO ERROR')
+                self.notice.set(s.receiver.error+(' Reconnecting video automatically; waiting for fresh frames.'
+                                                if retrying else ' Disconnect, then retry.'))
             elif s.model_error: self.state.set('MODEL ERROR'); self.notice.set(s.model_error)
             elif s.log.error: self.notice.set('Log write failed: '+s.log.error)
+            elif self.notice.get().endswith(' Reconnecting video automatically; waiting for fresh frames.'):
+                self.notice.set('Video recovered. Tracking requires a new target confirmation.')
             if decision:
                 age=decision.get('measurement_age_ms'); age_text='--' if age is None else f'{age:.0f} ms'
                 search=decision.get('edge_search') or {}
@@ -713,12 +800,16 @@ class FollowLabWindow:
                 result=s.result.get(); inference='--' if result is None else f"{result['inference_ms']:.1f} ms"
                 compute=s.model_info.get('compute',{}) if s.model_info else {}
                 compute_label=compute.get('label','loading')
+                model_shape=s.model_info.get('input',[]) if s.model_info else []
+                model_size=f'{model_shape[3]}x{model_shape[2]}' if len(model_shape)==4 else '--'
                 if compute.get('fallback_reason'): compute_label+=' (GPU fallback)'
                 self.forward_status.set(forward_status_text(decision,self.current_axis_limits()['forward'])
                     +'\nSide: '+(decision.get('centering_control') or {}).get('lateral_control',{}).get('reason','waiting_measurements'))
-                self.metrics.set(f"{self.model.get()}\nModel: {compute_label}\n"
+                self.metrics.set(f"{self.model.get()}\nModel: {compute_label} | input {model_size}\n"
                     f"YOLO: {inference} | target age: {age_text}\n"
                     f"Track source: {decision.get('track_support','--')}\n"
+                    f"Nano: {(decision.get('nano') or {}).get('mode','off')} / {(decision.get('nano') or {}).get('visual_state','--')} / {(decision.get('nano') or {}).get('update_fps',0):.1f} FPS\n"
+                    f"Nano control: {(decision.get('nano') or {}).get('reason','--')}\n"
                     f"Target {decision.get('tracking',{}).get('logical_target_id','--')} / BoT ID {decision.get('tracking',{}).get('target_id','--')}\n"
                     f"{decision.get('tracking',{}).get('association_reason','')}\n"
                     f"Candidate evidence: {decision.get('tracking',{}).get('candidate_hits',0)} frames\n"
@@ -735,19 +826,34 @@ class FollowLabWindow:
             fid=(analysis['result']['frame'].frame_id if analysis and self.view.get()=='Analyzed frame' else frame.frame_id if frame else 0)
             displayed=(analysis['result']['frame'] if analysis and self.view.get()=='Analyzed frame' else frame)
             stale=displayed is None or now-displayed.decoded_at>self.settings.stale_seconds
-            key=(fid,self.view.get(),int(now*10),self.canvas.winfo_width(),self.canvas.winfo_height())
+            nv=((analysis or {}).get('nano') if self.view.get()=='Analyzed frame' else (decision or {}).get('nano')) or {}
+            key=(fid,nv.get('frame_id'),self.view.get(),int(now*10),self.canvas.winfo_width(),self.canvas.winfo_height())
             if key!=self.draw_key:
-                image,chosen,meta=render_bundle(frame,analysis,decision,self.view.get(),self.settings.stale_seconds)
+                # Draw at the actual display size; keep full-resolution images
+                # for the separate snapshot/recording paths.
+                source=displayed.image.shape if displayed is not None else (2,2)
+                fit=min(max(2,self.canvas.winfo_width())/source[1],max(2,self.canvas.winfo_height())/source[0],1.)
+                self.last_render=(frame,analysis,decision,self.view.get(),self.settings.stale_seconds)
+                image,chosen,meta=render_bundle(*self.last_render,
+                    output_size=(max(2,round(source[1]*fit)),max(2,round(source[0]*fit))))
                 if image is not None:
                     self.last_image=image; self.last_frame=chosen; self.last_meta=meta
                     rgb=Image.fromarray(cv2.cvtColor(image,cv2.COLOR_BGR2RGB))
                     rgb.thumbnail((max(2,self.canvas.winfo_width()),max(2,self.canvas.winfo_height())),Image.Resampling.BILINEAR)
                     self.photo=ImageTk.PhotoImage(rgb)
                     self.canvas.delete('all'); self.canvas.create_image(self.canvas.winfo_width()/2,self.canvas.winfo_height()/2,image=self.photo,anchor='center')
+                else:
+                    self.last_image=None;self.last_frame=None;self.last_meta=None;self.photo=None
+                    self.canvas.delete('all')
+                    self.canvas.create_text(self.canvas.winfo_width()/2,self.canvas.winfo_height()/2,
+                        text='Waiting for live video / '+s.receiver.state,fill='white')
                 self.draw_key=key
             decode_age='--' if frame is None else f'{(now-frame.decoded_at)*1000:.0f} ms'
             size='--' if frame is None else f'{frame.image.shape[1]}x{frame.image.shape[0]}'
-            self.video_stats.set(f'{size} | Input {source_fps:.1f} FPS | Processed video {video_fps:.1f} FPS | YOLO {inference_fps:.1f} FPS | Decode age {decode_age} | Unanalyzed selected frames {s.inference_skips}')
+            timing=s.receiver.timing_snapshot(now)
+            gaps=(f" | Decode gaps >250 ms: {timing['decode_gaps_over_250ms']} (max {timing['max_decode_gap_ms']:.0f} ms)"
+                  if timing['decode_gaps_over_250ms'] else '')
+            self.video_stats.set(f'{size} | Input {source_fps:.1f} FPS | Processed video {video_fps:.1f} FPS | YOLO {inference_fps:.1f} FPS | Decode age {decode_age} | Unanalyzed selected frames {s.inference_skips}'+gaps)
         self.show_control_indicator()
         diagram=getattr(self,'state_diagram',None)
         if diagram is not None:
@@ -762,7 +868,8 @@ class FollowLabWindow:
                                       +(f" | {recording['error']}" if recording['error'] else ''))
         busy=bool(recorder and recorder.thread.is_alive())
         self.capture_button.configure(text='Save' if self.capture_mode.get()=='Snapshot' else 'Stop' if busy else 'Start')
-        self.root.after(33,self.refresh)
+        # Account for rendering time instead of adding 33 ms after every draw.
+        self.root.after(max(1,round(1000/30-(time.monotonic()-refresh_started)*1000)),self.refresh)
 
     def mark_dirty(self,*args):
         try: dirty=asdict(self.read_settings())!=asdict(self.settings)

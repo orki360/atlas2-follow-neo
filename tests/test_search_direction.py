@@ -117,7 +117,7 @@ class DirectionTests(unittest.TestCase):
         self.begin(1)
         d=self.r.update(self.start+.2,True,False,'APPROACH',False,self.s,None)
         self.assertFalse(d['active']);self.assertEqual(d['reason'],'waiting_heading')
-        d=self.r.update(self.start+.6,True,False,'APPROACH',False,self.s,None)
+        d=self.r.update(self.start+1.1,True,False,'APPROACH',False,self.s,None)
         self.assertEqual(d['reason'],'heading_unavailable')
     def test_retained_edge_direction_cannot_override_new_motion_estimate(self):
         r=RecoverySearch();s=Settings()

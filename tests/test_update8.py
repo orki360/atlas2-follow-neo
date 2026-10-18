@@ -12,6 +12,7 @@ from follow_neo.dance import dance_command,ZERO
 from follow_neo.edge_search import yaw_override
 from follow_neo.video import LatestValue,VideoReceiver,Frame
 from follow_neo.session import FollowSession
+from follow_neo.detector import DetectorSettings
 from follow_neo.cadence import FrameRateGate
 from follow_neo.manual import ManualControl
 from test_manual import Server,wait_for
@@ -162,9 +163,13 @@ class CadenceTests(unittest.TestCase):
     def test_receiver_skips_conversion_for_unsampled_frames(self):
         decoded=Mock();decoded.to_ndarray.return_value=np.zeros((20,20,3),np.uint8)
         published=[];r=VideoReceiver('127.0.0.1',processing_fps=30,on_frame=published.append)
-        for i in range(120):r._publish_decoded(decoded,10+i/60)
+        for i in range(120):
+            stamp=10+i/60
+            with patch('follow_neo.video.time.monotonic',return_value=stamp):
+                r._publish_decoded(decoded,stamp);r._publish_pending(stamp)
         self.assertEqual(r.count,120);self.assertEqual(r.processed_count,60)
-        self.assertEqual(r.sampled_out,60);self.assertEqual(decoded.to_ndarray.call_count,60)
+        self.assertEqual(r.sampled_out,59);self.assertEqual(r.sampler.snapshot()['pending'],1)
+        self.assertEqual(decoded.to_ndarray.call_count,60)
         self.assertEqual(len(published),60);self.assertEqual(r.frames.version,60)
         self.assertEqual(published[1].frame_id,3)
 
@@ -231,6 +236,7 @@ class SessionSchedulingTests(unittest.TestCase):
             session=FollowSession(temp.name,'127.0.0.1')
         entered=threading.Event();release=threading.Event();seen=[];published=[]
         detector=Mock();detector.input.shape=[1,3,640,640];detector.output.shape=[1,5,8400]
+        detector.settings=DetectorSettings()
         detector.outputs=[detector.output]
         detector.session.get_providers.return_value=['TestProvider']
         detector.class_names=['drone'];detector.compute_info={'label':'test double'}

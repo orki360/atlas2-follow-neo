@@ -2,11 +2,14 @@
 from pathlib import Path
 import sys
 import tempfile
+import json
 import tkinter as tk
 
 sys.path.insert(0,str(Path(sys.argv[1]).resolve()))
-from VERSION import VERSION
+from VERSION import VERSION,REVISION
 from follow_neo.gui import FollowLabWindow
+from follow_neo.models import DEFAULT_MODEL,MODEL_NAMES,DUAL_MODELS,model_from_config
+from follow_neo.types import Settings,settings_from_config
 
 with tempfile.TemporaryDirectory() as folder:
     root=tk.Tk()
@@ -14,12 +17,69 @@ with tempfile.TemporaryDirectory() as folder:
     try:
         window=FollowLabWindow(root,Path(folder))
         root.update_idletasks()
-        assert VERSION=='12.0.0'
-        assert window.version_label.cget('text')=='v12.0.0'
-        assert window.revision_label.cget('text')=='live-state-diagram-8'
+        assert VERSION=='13.0.0'
+        assert window.version_label.cget('text')=='v'+VERSION
+        assert window.revision_label.cget('text')==REVISION
+        assert window.model.get()==DEFAULT_MODEL
+        assert tuple(window.model_picker.cget('values'))==MODEL_NAMES
+        for name in DUAL_MODELS:
+            window.model.set(name)
+            window.save_config()
+            saved=json.loads(window.config_path.read_text(encoding='utf-8'))
+            assert model_from_config(saved)==name
+            assert window.session is None and window.manual is None
+        window.model.set(DEFAULT_MODEL)
         assert window.tabs.tab(window.diagram_tab,'text')=='Live states'
         assert window.tabs.select()==str(window.diagram_tab)
         assert window.search_auto.get() is True
+        assert window.nano_mode.get()==Settings().nano_mode
+        for key,value in (('botsort_match_threshold',.85),('botsort_low_match_threshold',.55),
+                          ('botsort_unconfirmed_match_threshold',.75)):
+            assert key in window.vars
+            window.vars[key].set(str(value))
+        window.apply()
+        restored=settings_from_config(json.loads(window.config_path.read_text()))
+        assert (restored.botsort_match_threshold,restored.botsort_low_match_threshold,
+                restored.botsort_unconfirmed_match_threshold)==(.85,.55,.75)
+        for mode in ('off','shadow','guarded'):
+            window.nano_mode.set(mode)
+            window.settings=window.read_settings();window.save_config()
+            assert json.loads(window.config_path.read_text())['settings']['nano_mode']==mode
+        window.nano_mode.set('shadow');window.settings=window.read_settings()
+        assert window.session is None and window.manual is None
+        assert window.tabs.tab(window.motion_tab,'text')=='Motion'
+        assert len(window.motion_controls)==15
+        assert tuple(window.scan_observation_picker.cget('values'))==('stop','slowdown')
+        assert window.scan_observation_mode.get()=='stop'
+        window.vars['scan_observation_degrees'].set('80')
+        window.vars['scan_yaw_limit'].set('45')
+        window.vars['scan_observation_yaw'].set('6')
+        window.scan_observation_mode.set('slowdown');window.apply()
+        restored=settings_from_config(json.loads(window.config_path.read_text()))
+        assert restored.scan_observation_degrees==80 and restored.scan_yaw_limit==.45
+        assert restored.scan_observation_yaw==.06 and restored.scan_observation_mode=='slowdown'
+        window.vars['scan_observation_degrees'].set('360')
+        window.vars['scan_observation_yaw'].set('60');window.apply()
+        restored=settings_from_config(json.loads(window.config_path.read_text()))
+        assert restored.scan_observation_degrees==360 and restored.scan_observation_yaw==.6
+        window.vars['scan_observation_degrees'].set('720');window.apply()
+        assert settings_from_config(json.loads(window.config_path.read_text())).scan_observation_degrees==720
+        assert window.coordinated_turns.get() is True
+        window.coordinated_turns.set(False)
+        window.vars['forward_window_width'].set('65')
+        window.vars['forward_window_height'].set('35')
+        window.vars['forward_yaw_rate_limit'].set('50')
+        window.vars['search_look_seconds'].set('0.20')
+        window.forward_require_nano.set(True)
+        window.apply()
+        saved=json.loads(window.config_path.read_text())
+        restored=settings_from_config(saved)
+        assert restored.forward_window_width==.65 and restored.forward_window_height==.35
+        assert restored.forward_yaw_rate_limit==50 and restored.search_look_seconds==.20
+        assert restored.forward_require_nano is True
+        assert restored.coordinated_turns is False
+        window.coordinated_turns.set(True);window.apply()
+        assert settings_from_config(json.loads(window.config_path.read_text())).coordinated_turns is True
         assert window.session is None and window.manual is None
         assert callable(window.key_state_reader)
         texts=[]
@@ -35,7 +95,7 @@ with tempfile.TemporaryDirectory() as folder:
         assert 'Connect' in window.notice.get()
         assert 'Apply / keep target' in texts
         assert 'Loss grace (seconds)' in texts
-        assert 'Auto scan time for angle (max 10 s)' in texts
+        assert 'Auto scan time for angle (up to 35 s)' in texts
         assert float(window.vars['search_grace_seconds'].get())==.45
         panel=window.state_diagram
         before=len(panel.canvas.find_all())
@@ -48,6 +108,6 @@ with tempfile.TemporaryDirectory() as folder:
             assert panel.last_view['state']==state
             assert panel.canvas.itemcget(panel.boxes[state],'fill')!= '#243746'
         assert len(panel.canvas.find_all())==before
-        print('PASS: actual Tk GUI initializes; version 12.0.0 / live-state-diagram-8; all state highlights update without recreating canvas items; offline start refused; no connections.')
+        print(f'PASS: offline Tk GUI {VERSION} / {REVISION}; dual-class model is default; all state highlights update; offline start refused; no connections.')
     finally:
         root.destroy()

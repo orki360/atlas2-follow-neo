@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import Mock
 from follow_neo.control_status import control_indicator
 from follow_neo.gui import FollowLabWindow
+from follow_neo.models import DEFAULT_MODEL
 
 
 def control(**kwargs):
@@ -40,6 +41,7 @@ class IndicatorTests(unittest.TestCase):
         obj=FollowLabWindow.__new__(FollowLabWindow)
         obj.manual=control()
         obj.session=Mock(model_error=None,model_info={'ready':True})
+        obj.session.model_path=Path(DEFAULT_MODEL)
         obj.session.receiver.state='STREAMING'
         obj.session.receiver.host=obj.manual.host='192.168.1.2'
         obj.stopping=False; obj.notice=Mock(); obj.root=Mock(); obj.canvas=Mock()

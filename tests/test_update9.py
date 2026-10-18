@@ -270,7 +270,7 @@ class SettingsAndTelemetryTests(unittest.TestCase):
         worker=threading.Thread(target=serve,daemon=True);worker.start()
         def connect(address,timeout):
             self.assertEqual(address,('127.0.0.1',9997));return client
-        r=HeadingReceiver('127.0.0.1',connector=connect);r.start()
+        r=HeadingReceiver('127.0.0.1',connector=connect,prefer_listen=False);r.start()
         try:
             wait_for(lambda:r.get() is not None)
             self.assertEqual(r.get()['yaw_deg'],12.5)

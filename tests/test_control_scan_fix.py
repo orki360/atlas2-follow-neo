@@ -21,6 +21,7 @@ class AsyncServer:
     """Read commands even when a previous reply is deliberately withheld."""
     def __init__(self,block_movement=False):
         self.client,self.server=socket.socketpair();self.commands=[];self.block=block_movement
+        self.withheld=[]
         self.motion=threading.Event();self.zero=threading.Event();self.disabled=threading.Event()
         self.thread=threading.Thread(target=self.run,daemon=True);self.thread.start()
     def connect(self,address,timeout):
@@ -35,7 +36,9 @@ class AsyncServer:
                     if nonzero:self.motion.set()
                     if cmd.startswith('rc ') and not nonzero and self.motion.is_set():self.zero.set()
                     if cmd=='disable':self.disabled.set()
-                    if self.block and self.motion.is_set():continue
+                    if self.block and self.motion.is_set():
+                        self.withheld.append(cmd)
+                        continue
                     self.server.sendall(b'success\r\n')
         except OSError:pass
         finally:self.server.close()
@@ -144,7 +147,8 @@ class ScanTests(unittest.TestCase):
         d=self.step(11.1,-10);self.assertGreater(d['scan_yaw'],0)
         self.assertEqual(d['scan_target_degrees'],10)
         d=self.step(11.5,10);self.assertEqual(d['scan_yaw'],0)
-        d=self.step(11.7,10);self.assertLess(d['scan_yaw'],0)
+        d=self.step(11.7,10);self.assertEqual(d['scan_yaw'],0)
+        self.assertEqual(d['reason'],'scan_complete');self.assertTrue(d['consumed'])
     def test_narrow_arc_starts_braking_scan_without_full_boost(self):
         d=self.begin(outward=True);end=d['until']
         self.assertEqual(d['phase'],'SCAN');self.assertEqual(yaw_override(self.decision(d,self.now),self.now,9),0)
@@ -162,7 +166,7 @@ class ScanTests(unittest.TestCase):
         self.begin(outward=True)
         d=self.r.update(10.8,True,False,'APPROACH',False,self.s,None)
         self.assertFalse(d['active']);self.assertEqual(d['reason'],'waiting_heading')
-        d=self.r.update(11.2,True,False,'APPROACH',False,self.s,None)
+        d=self.r.update(11.7,True,False,'APPROACH',False,self.s,None)
         self.assertEqual(d['reason'],'heading_unavailable');self.assertTrue(d['consumed'])
     def test_reacquisition_pauses_immediately_and_three_measurements_finish(self):
         self.begin()

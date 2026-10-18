@@ -131,7 +131,8 @@ class DebugContracts(unittest.TestCase):
         self.addCleanup(lambda:(c.stop(),c.thread.join(3)))
         c.set_axis_limits(dict(yaw=.02,vertical=1.,roll=1.,forward=1.))
         c.start_dance();c.update(set());c.enable();c.start()
-        wait_for(lambda:(c.update(set()) or 'rc 1.0000 0.0000 0.0000 0.0000' in peer.commands))
+        wait_for(lambda:(c.update(set()) or any(cmd.startswith('rc ') and float(cmd.split()[1])>.2
+            and all(float(x)==0 for x in cmd.split()[2:]) for cmd in peer.commands)))
         c.update({'a'});wait_for(lambda:'rc -0.0200 0.0000 0.0000 0.0000' in peer.commands)
 
     def test_measured_wraparound_and_post_stop_drift_are_logged(self):
@@ -160,7 +161,8 @@ class DebugContracts(unittest.TestCase):
         c.set_axis_limits(dict(yaw=.01,vertical=1.,roll=1.,forward=1.))
         c.update(set());c.enable();c.start();wait_for(lambda:c.enabled)
         c.start_search_test(Settings(search_yaw_degrees=180),lambda:heading(time.monotonic()),'RIGHT')
-        wait_for(lambda:(c.update(set()) or 'rc 1.0000 0.0000 0.0000 0.0000' in peer.commands))
+        wait_for(lambda:(c.update(set()) or any(cmd.startswith('rc ') and float(cmd.split()[1])>.2
+            and all(float(x)==0 for x in cmd.split()[2:]) for cmd in peer.commands)))
         c.stop_search_test();index=len(peer.commands)
         wait_for(lambda:any(x=='rc 0.0000 0.0000 0.0000 0.0000' for x in peer.commands[index:]))
         self.assertEqual(c.mode,'MANUAL')

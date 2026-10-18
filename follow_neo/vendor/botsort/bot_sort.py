@@ -219,8 +219,38 @@ class BoTSORT(object):
             raise ValueError("This bundled BoT-SORT build runs without ReID")
 
         self.gmc = GMC(method=args.cmc_method, verbose=[args.name, args.ablation])
+        self.association_diagnostics = []
+        self.diagnostic_target_id = None
+
+    def _associate(self, stage, costs, tracks, detections, threshold):
+        result = matching.linear_assignment(costs, thresh=threshold)
+        matches, unmatched_tracks, unmatched_detections = result
+        assigned = {int(i):int(j) for i,j in matches}
+        # Inspect the selected target first, then a bounded sample of other IDs.
+        order = sorted(range(len(tracks)), key=lambda i:tracks[i].track_id != self.diagnostic_target_id)
+        rows = []
+        for i in order[:8]:
+            finite = np.flatnonzero(np.isfinite(costs[i]))
+            best = int(finite[np.argmin(costs[i,finite])]) if len(finite) else None
+            selected = assigned.get(i)
+            reason = ('matched' if selected is not None else 'no_detections' if not len(detections)
+                      else 'invalid_cost' if best is None else 'cost_above_limit'
+                      if costs[i,best]>threshold else 'assignment_competition')
+            rows.append(dict(track_id=int(tracks[i].track_id),selected_target=tracks[i].track_id==self.diagnostic_target_id,
+                outcome=reason,best_detection_index=best,
+                best_cost=None if best is None else round(float(costs[i,best]),6),
+                best_confidence=None if best is None else round(float(detections[best].score),6),
+                matched_detection_index=selected,
+                matched_cost=None if selected is None else round(float(costs[i,selected]),6)))
+        self.association_diagnostics.append(dict(stage=stage,threshold=float(threshold),
+            cost_kind='1-IoU' if stage=='weak' else '1-IoU*confidence',
+            track_count=len(tracks),detection_count=len(detections),match_count=len(matches),
+            unmatched_tracks=len(unmatched_tracks),unmatched_detections=len(unmatched_detections),
+            rows=rows,rows_omitted=max(0,len(tracks)-len(rows))))
+        return result
 
     def update(self, output_results, img):
+        self.association_diagnostics = []
         self.frame_id += 1
         activated_starcks = []
         refind_stracks = []
@@ -318,7 +348,7 @@ class BoTSORT(object):
         else:
             dists = ious_dists
 
-        matches, u_track, u_detection = matching.linear_assignment(dists, thresh=self.args.match_thresh)
+        matches, u_track, u_detection = self._associate('primary',dists,strack_pool,detections,self.args.match_thresh)
 
         for itracked, idet in matches:
             track = strack_pool[itracked]
@@ -353,7 +383,8 @@ class BoTSORT(object):
 
         r_tracked_stracks = [strack_pool[i] for i in u_track if strack_pool[i].state == TrackState.Tracked]
         dists = matching.iou_distance(r_tracked_stracks, detections_second)
-        matches, u_track, u_detection_second = matching.linear_assignment(dists, thresh=0.5)
+        matches, u_track, u_detection_second = self._associate('weak',dists,r_tracked_stracks,detections_second,
+                                                              getattr(self.args,'low_match_thresh',.5))
         for itracked, idet in matches:
             track = r_tracked_stracks[itracked]
             det = detections_second[idet]
@@ -386,7 +417,8 @@ class BoTSORT(object):
         else:
             dists = ious_dists
 
-        matches, u_unconfirmed, u_detection = matching.linear_assignment(dists, thresh=0.7)
+        matches, u_unconfirmed, u_detection = self._associate('tentative',dists,unconfirmed,detections,
+                                                              getattr(self.args,'unconfirmed_match_thresh',.7))
         for itracked, idet in matches:
             unconfirmed[itracked].update(detections[idet], self.frame_id)
             activated_starcks.append(unconfirmed[itracked])

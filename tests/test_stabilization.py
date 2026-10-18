@@ -81,7 +81,7 @@ class CandidateTests(unittest.TestCase):
         for _ in range(3):accepted=self.feed([detection(255,.2)])
         self.assertTrue(accepted);self.assertTrue(self.tracker.measurement_weak)
     def test_long_gap_discards_old_candidate_evidence(self):
-        self.feed([detection(255,.2)]);self.feed([],dt=.2)
+        self.feed([detection(255,.2)]);self.feed([],dt=.35)
         self.assertIsNone(self.tracker.pending)
         self.assertFalse(self.feed([detection(255,.2)]));self.assertEqual(self.tracker.pending['hits'],1)
     def test_broad_recovery_accepts_coherent_mixed_confidence(self):
@@ -92,7 +92,7 @@ class CandidateTests(unittest.TestCase):
     def test_pause_budget_is_not_renewed_by_new_candidates(self):
         self.feed([detection(255,.2)])
         for _ in range(12):
-            self.feed([],dt=.16);self.feed([detection(255,.2)])
+            self.feed([],dt=.31);self.feed([detection(255,.2)])
         self.assertFalse(self.tracker.candidate_pending)
     def test_botsort_prediction_uses_actual_source_interval(self):
         x=self.tracker.target.mean[0];self.tracker.target.mean[4]=3.

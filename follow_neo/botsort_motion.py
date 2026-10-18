@@ -1,5 +1,6 @@
 """One BoT motion estimate; persistent logical identity and measured recovery."""
 import math
+import time
 from collections import deque
 from types import SimpleNamespace
 import numpy as np
@@ -8,6 +9,11 @@ from .camera_motion import CameraMotion
 from .prediction import project_center
 
 RECOVERY_SECONDS = 3.0
+# Source timestamps, not UI ticks. The recorded 11 Hz stream has legitimate
+# 187--234 ms intervals. Keep the same evidence counts with a feasible window.
+CANDIDATE_GAP_SECONDS = .30
+CANDIDATE_WINDOW_SECONDS = 1.20
+CANDIDATE_PAUSE_SECONDS = 1.40
 
 def low_threshold(confidence):
     return min(.10, confidence*.5)
@@ -38,16 +44,18 @@ class BoTSORTTracker:
         self.acquisition=None
         self.acquisition_attempted=False
         self.numerical_event=None;self.numerical_recoveries=0
+        self.update_ms=self.engine_ms=0.
+        self.match_thresholds=(.80,.50,.70)
 
     def _acquire(self,valid,current,source_time,threshold):
         """A tentative ID is not a permanent target lock.
 
         Two coherent strong measurements confirm acquisition. Weak measurements
-        may bridge a 150ms gap, but cannot start or confirm a target. Evidence
+        may bridge a 300ms gap, but cannot start or confirm a target. Evidence
         expires after 600ms. Only the engine's existing Kalman state is selected.
         """
         old=self.acquisition
-        if old and (source_time-old['time']>.15 or source_time-old['strong_times'][0]>.6):old=None
+        if old and (source_time-old['time']>CANDIDATE_GAP_SECONDS or source_time-old['strong_times'][0]>.6):old=None
         self.acquisition=old
         strong=[d for d in valid if d.confidence>=threshold]
         nearby=[]
@@ -117,7 +125,7 @@ class BoTSORTTracker:
         # Maintain a coherent candidate through a brief detector gap or weak
         # confidence dip, even if the old predicted track has moved off-screen.
         old=self.pending
-        if old and 0<now-old['time']<=.15:
+        if old and 0<now-old['time']<=CANDIDATE_GAP_SECONDS:
             point=old['point']
             if (np.linalg.norm(np.array([box.cx,box.cy])-point)<=max(16.,box.width,box.height)*1.25
                 and .55<=box.width/old['width']<=1.8 and .45<=box.height/old['height']<=2.2):
@@ -134,7 +142,17 @@ class BoTSORTTracker:
                 return 2.+.1*float(np.sum(np.abs(np.log(ratio))))
         return None
 
-    def _recover(self,valid,current,source_time,strong_confidence):
+    def _recover(self,valid,current,source_time,strong_confidence,continuity=None):
+        # The optional proof refers to an ORIGINAL YOLO detection, supported by
+        # Nano at the same source time. It cannot create an identity or a box.
+        if continuity is not None and self.confirmed and self.last_strong_time is not None:
+            matches=[d for d in valid if d.confidence>=max(.75,self.acquisition_confidence,strong_confidence)
+                     and np.allclose(list(vars(d.box).values()),continuity['box'],atol=.001)]
+            if (len(matches)==1 and continuity.get('identity')==self.logical_target_id
+                    and continuity.get('source_time')==source_time
+                    and continuity.get('frame_id')==self.last_result_id
+                    and 0<source_time-self.last_strong_time<=.40):
+                return self._restore_detection(matches[0],current,'verified_visual_continuity',1,1,False)
         ranked=sorted(((cost,d) for d in valid
                        if (cost:=self._candidate(d,source_time)) is not None),key=lambda p:p[0])
         self.candidate_details=[dict(confidence=d.confidence,cost=cost,
@@ -143,9 +161,9 @@ class BoTSORTTracker:
         self.candidate_rejections=[dict(box=list(vars(d.box).values()),reason='outside_geometry_or_weak_return')
                                    for d in valid if id(d) not in ranked_ids]
         if not ranked:
-            if self.pending and source_time-self.pending['time']<=.15:
+            if self.pending and source_time-self.pending['time']<=CANDIDATE_GAP_SECONDS:
                 self.association_reason='candidate_gap'
-                self.candidate_pending=bool(self.pause_started is not None and source_time-self.pause_started<=.8)
+                self.candidate_pending=bool(self.pause_started is not None and source_time-self.pause_started<=CANDIDATE_PAUSE_SECONDS)
             else:self.pending=None;self.association_reason='no_plausible_candidate'
             return None
         if len(ranked)>1 and ranked[1][0]-ranked[0][0]<.20:
@@ -156,7 +174,7 @@ class BoTSORTTracker:
         self.last_candidate_time=source_time
         if old is not None:relocation=relocation or old['relocation']
         point=np.array([det.box.cx,det.box.cy]);coherent=False;step=None
-        if old is not None and 0<source_time-old['time']<=.15:
+        if old is not None and 0<source_time-old['time']<=CANDIDATE_GAP_SECONDS:
             previous=old['point'];step=point-previous
             scale=max(16.,det.box.width,det.box.height)
             coherent=(np.linalg.norm(step)<=scale*1.5 and .55<=det.box.width/old['width']<=1.8
@@ -164,17 +182,22 @@ class BoTSORTTracker:
             if old['step'] is not None and np.linalg.norm(step)>scale*.15:
                 coherent=coherent and float(step@old['step'])>=-scale*scale*.1
         if not coherent:old=None
-        samples=[] if old is None else [s for s in old['samples'] if source_time-s[0]<=.6]
+        samples=[] if old is None else [s for s in old['samples'] if source_time-s[0]<=CANDIDATE_WINDOW_SECONDS]
         samples.append((source_time,det.confidence>=strong_confidence))
         self.pending=dict(point=point,width=det.box.width,height=det.box.height,time=source_time,relocation=relocation,
                           since=samples[0][0],hits=len(samples),strong=sum(s[1] for s in samples),samples=samples,
                           step=step if coherent else None)
-        p=self.pending;self.candidate_pending=source_time-self.pause_started<=.8
+        p=self.pending;self.candidate_pending=source_time-self.pause_started<=CANDIDATE_PAUSE_SECONDS
         self.association_reason='candidate_verifying'
         strong=p['strong']>=3
         needed=8 if relocation else 3 if strong else 4
         span=.25 if relocation else .06 if strong else .10
         if p['hits']<needed or source_time-p['since']<span or relocation and p['strong']<3:return None
+        return self._restore_detection(det,current,
+            'verified_returning_target' if relocation else 'verified_strong_recovery' if strong else 'verified_weak_recovery',
+            p['hits'],p['strong'],relocation)
+
+    def _restore_detection(self,det,current,reason,hits,strong_hits,relocation):
         candidate_track=next((t for t in current if np.allclose(t._tlwh,
                       [det.box.x1,det.box.y1,det.box.width,det.box.height],atol=.01)),None)
         previous_id=self.target_id
@@ -195,18 +218,25 @@ class BoTSORTTracker:
         if all(t.track_id!=selected.track_id for t in self.engine.tracked_stracks):self.engine.tracked_stracks.append(selected)
         self.identity_event=dict(previous_track_id=previous_id,track_id=selected.track_id,
                                  candidate_track_id=candidate_id,
-                                 logical_target_id=self.logical_target_id,reason='verified_reassociation',
-                                 observations=p['hits'],strong_observations=p['strong'],relocation=relocation)
-        self.association_reason='verified_returning_target' if relocation else 'verified_strong_recovery' if strong else 'verified_weak_recovery'
+                                 logical_target_id=self.logical_target_id,reason=reason,
+                                 observations=hits,strong_observations=strong_hits,relocation=relocation)
+        self.association_reason=reason
         self.pending=None;self.candidate_pending=False
         return selected
 
     def update(self,detections,source_time,now,frame_id,start_confidence=.45,
-               strong_confidence=.25,continuation_confidence=.10,image=None):
+               strong_confidence=.25,continuation_confidence=.10,image=None,continuity=None,match_thresholds=None):
+        if match_thresholds is not None:
+            values=tuple(float(v) for v in match_thresholds)
+            if len(values)!=3 or any(not math.isfinite(v) or not .10<=v<=hi
+                                    for v,hi in zip(values,(.90,.70,.85))):
+                raise ValueError('Invalid BoT-SORT matching cost thresholds')
+            self.match_thresholds=values
         self.numerical_event=None
+        update_started=time.perf_counter();self.engine_ms=0.
         try:
             accepted=self._update(detections,source_time,now,frame_id,start_confidence,
-                                  strong_confidence,continuation_confidence,image)
+                                  strong_confidence,continuation_confidence,image,continuity)
             if self.target is not None and (not np.isfinite(self.target.mean).all()
                                             or not np.isfinite(self.target.covariance).all()):
                 raise np.linalg.LinAlgError('Non-finite BoT-SORT state')
@@ -220,9 +250,11 @@ class BoTSORTTracker:
             self.numerical_event=dict(reason=str(exc),previous_target_id=previous_id,
                 frame_id=frame_id,source_time=source_time,recoveries=count,action='discard_state_reacquire')
             return False
+        finally:
+            self.update_ms=(time.perf_counter()-update_started)*1000
 
     def _update(self,detections,source_time,now,frame_id,start_confidence=.45,
-               strong_confidence=.25,continuation_confidence=.10,image=None):
+               strong_confidence=.25,continuation_confidence=.10,image=None,continuity=None):
         self.accepted=None;self.identity_event=None;self.candidate_pending=False;self.candidate_details=[];self.candidate_rejections=[]
         if not all(math.isfinite(t) for t in (source_time,now)) or source_time>now:
             self.association_reason='invalid_timestamp';return False
@@ -240,6 +272,8 @@ class BoTSORTTracker:
         self.acquisition_confidence=start_confidence
         engine.args.track_high_thresh=engine.track_high_thresh=strong_confidence
         engine.track_low_thresh=low_threshold(strong_confidence);engine.new_track_thresh=start_confidence
+        engine.args.match_thresh,engine.args.low_match_thresh,engine.args.unconfirmed_match_thresh=self.match_thresholds
+        engine.diagnostic_target_id=self.target_id
         dt=1. if self.last_result_time is None else max(.001,(source_time-self.last_result_time)*30.)
         engine.kalman_filter._motion_mat[:4,4:]=np.eye(4)*dt
         valid=[d for d in detections if math.isfinite(d.confidence) and engine.track_low_thresh<=d.confidence<=1
@@ -247,7 +281,9 @@ class BoTSORTTracker:
         self.detector_count=len(valid)
         rows=np.array([[d.box.x1,d.box.y1,d.box.x2,d.box.y2,d.confidence] for d in valid],dtype=np.float64).reshape(-1,5)
         target_in_pool=self.target is not None and any(t is self.target for t in engine.tracked_stracks+engine.lost_stracks)
+        engine_started=time.perf_counter()
         tracks=engine.update(rows,image)
+        self.engine_ms=(time.perf_counter()-engine_started)*1000
         if self.acquisition is not None:
             warp=engine.gmc.last_warp;ref=self.acquisition['box']
             ref[:2]=warp[:,:2]@ref[:2]+warp[:,2]
@@ -276,7 +312,7 @@ class BoTSORTTracker:
         else:
             selected=next((t for t in current if t.track_id==self.target_id),None)
             self.association_reason='matched_target' if selected is not None else 'no_target_match'
-            if selected is None:selected=self._recover(valid,current,source_time,strong_confidence)
+            if selected is None:selected=self._recover(valid,current,source_time,strong_confidence,continuity)
             if selected is None:return False
         if self.association_reason=='matched_target':self.pending=None
         self.target=selected;self.target_id=selected.track_id
@@ -339,6 +375,9 @@ class BoTSORTTracker:
 
     def diagnostics(self):
         return dict(backend=self.backend,target_id=self.target_id,logical_target_id=self.logical_target_id,reid=False,
+                    match_thresholds=dict(zip(('primary','weak','tentative'),self.match_thresholds)),
+                    timing=dict(update_ms=self.update_ms,engine_ms=self.engine_ms,
+                        camera_motion={} if self.engine is None else dict(self.engine.gmc.timing)),
                     numerical_recoveries=self.numerical_recoveries,numerical_event=self.numerical_event,
                     acquisition_state='confirmed' if self.confirmed else 'verifying' if self.acquisition else 'reacquiring' if self.acquisition_attempted else 'waiting',
                     acquisition_strong_hits=self.hits if not self.confirmed else 0,
@@ -348,9 +387,20 @@ class BoTSORTTracker:
                     candidate_hits=0 if self.pending is None else self.pending['hits'],
                     candidate_strong_hits=0 if self.pending is None else self.pending['strong'],
                     candidate_span_ms=0 if self.pending is None else (self.pending['time']-self.pending['since'])*1000,
-                    candidate_pause_budget_seconds=.8,
+                    candidate_pause_budget_seconds=CANDIDATE_PAUSE_SECONDS,
+                    candidate_gap_seconds=CANDIDATE_GAP_SECONDS,
+                    candidate_window_seconds=CANDIDATE_WINDOW_SECONDS,
                     identity_changes=self.identity_changes,identity_event=self.identity_event,
                     detector_count=self.detector_count,target_state=None if self.target is None else int(self.target.state),
                     camera_warp=None if self.engine is None else self.engine.gmc.last_warp.tolist(),
                     camera_motion='initializing' if self.engine is None else self.engine.gmc.status,
                     camera_motion_inliers=0 if self.engine is None else self.engine.gmc.inliers)
+
+    def association_report(self):
+        """One bounded report per YOLO result, not on every RC/control tick."""
+        return dict(frame_id=self.last_result_id,source_time=self.last_result_time,
+                    target_id=self.target_id,logical_target_id=self.logical_target_id,
+                    accepted=self.accepted is not None,measurement_weak=bool(self.measurement_weak),
+                    association_reason=self.association_reason,
+                    thresholds=dict(zip(('primary','weak','tentative'),self.match_thresholds)),
+                    stages=[] if self.engine is None else self.engine.association_diagnostics)
