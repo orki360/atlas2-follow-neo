@@ -1,4 +1,4 @@
-"""Release 13.0.0: dual-class isolation plus the existing release gate."""
+"""Release 14.0.0: dual-class isolation plus the existing release gate."""
 import sys
 import unittest
 from pathlib import Path

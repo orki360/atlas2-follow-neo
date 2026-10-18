@@ -1,7 +1,8 @@
-# גרסה 13 — זיהוי NEO ו־MINI PRO4, מעקב אחר neo בלבד
+# גרסה 14 — זיהוי NEO ו־MINI PRO4, מעקב אחר neo בלבד
 
 מודל ברירת המחדל: `models/yolo26s_seg_best_mp4_v2.onnx`.
-גרסת האפליקציה: `13.0.0 / tracking-recovery-14`.
+גרסת האפליקציה: `14.0.0 / tracking-recovery-14`, בענף `yolo26s_integ_v14`.
+שם קובץ זה נשמר כדי לשמר קישורים להיסטוריית העדכונים מגרסה 13.
 
 ## סנכרון אישורים והאטה בסריקה — tracking-recovery-14
 

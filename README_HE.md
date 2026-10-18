@@ -1,6 +1,6 @@
-# ATLAS2 Follow NEO — גרסה 13.0.0 / זיהוי שתי מחלקות
+# ATLAS2 Follow NEO — גרסה 14.0.0 / זיהוי שתי מחלקות
 
-העדכון הנוכחי הוא **`tracking-recovery-11`**. הרצה רגילה דרך
+העדכון הנוכחי הוא **`tracking-recovery-14`**, בענף **`yolo26s_integ_v14`**. הרצה רגילה דרך
 `RUN_FOLLOW_NEO.cmd`, עם Nano במצב **guarded**; אין צורך בהתקנת תלויות.
 
 בלשונית **Settings** נוספו ספי עלות ההתאמה של BoT-SORT:

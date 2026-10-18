@@ -17,7 +17,8 @@ with tempfile.TemporaryDirectory() as folder:
     try:
         window=FollowLabWindow(root,Path(folder))
         root.update_idletasks()
-        assert VERSION=='13.0.0'
+        assert VERSION=='14.0.0'
+        assert root.title()==f'ATLAS2 Follow NEO | Version {VERSION} / {REVISION} - BoT-SORT'
         assert window.version_label.cget('text')=='v'+VERSION
         assert window.revision_label.cget('text')==REVISION
         assert window.model.get()==DEFAULT_MODEL

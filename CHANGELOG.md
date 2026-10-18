@@ -1,5 +1,12 @@
 # CHANGELOG — Dancing Drones / Follow NEO
 
+## Version 14.0.0 / tracking-recovery-14 — Application version aligned with v14 branch — 2026-10-18
+
+- Set the shared application version to 14.0.0 to distinguish this branch from
+  the partner's v13. The window title, GUI version label and new session logs
+  use the same version source. Update documentation and offline GUI checks.
+- Tracking, flight control, model selection and saved settings are unchanged.
+
 ## Version 13.0.0 / tracking-recovery-14 — Neutral synchronization and usable slowdown — 2026-10-18
 
 - Diagnose session 194916: tracking paused at recording 00:46.234 after an extra
