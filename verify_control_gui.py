@@ -7,9 +7,9 @@ import tkinter as tk
 
 sys.path.insert(0,str(Path(sys.argv[1]).resolve()))
 from VERSION import VERSION,REVISION
-from follow_neo.gui import FollowLabWindow
-from follow_neo.models import DEFAULT_MODEL,MODEL_NAMES,DUAL_MODELS,model_from_config
-from follow_neo.types import Settings,settings_from_config
+from follow_neo.ui.window import FollowLabWindow
+from follow_neo.perception.models import DEFAULT_MODEL,MODEL_NAMES,DUAL_MODELS,model_from_config
+from follow_neo.shared.types import Settings,settings_from_config
 
 with tempfile.TemporaryDirectory() as folder:
     root=tk.Tk()
@@ -17,7 +17,7 @@ with tempfile.TemporaryDirectory() as folder:
     try:
         window=FollowLabWindow(root,Path(folder))
         root.update_idletasks()
-        assert VERSION=='14.0.2'
+        assert VERSION=='14.1.1'
         assert root.title()==f'ATLAS2 Follow NEO | Version {VERSION} / {REVISION} - BoT-SORT'
         assert window.version_label.cget('text')=='v'+VERSION
         assert window.revision_label.cget('text')==REVISION

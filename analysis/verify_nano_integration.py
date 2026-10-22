@@ -18,11 +18,11 @@ import numpy as np
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
-from follow_neo.session import FollowSession
-from follow_neo.types import settings_from_config
-from follow_neo.dance import dance_command
-from follow_neo.nano_guard import guard_reason
-from follow_neo.overlay import render_bundle
+from follow_neo.runtime.session import FollowSession
+from follow_neo.shared.types import settings_from_config
+from follow_neo.control.dance import dance_command
+from follow_neo.control.nano_guard import guard_reason
+from follow_neo.presentation.overlay import render_bundle
 import cv2
 
 

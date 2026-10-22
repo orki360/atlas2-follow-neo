@@ -1,5 +1,8 @@
 # Architecture — v0.2.0
 
+Historical design notes. For the current package layout and process boundaries,
+see [the 14.1 architecture guide](follow_neo/ARCHITECTURE_HE.md).
+
 All new application code lives under `tools/atlas2_follow_neo`. ATLAS Web/HTTP server is not required; Yam's Android Java application remains unchanged. Video uses TCP 9999. Manual keyboard and explicitly enabled NEO Dance share one TCP 9998 connection and one command writer.
 
 ```mermaid

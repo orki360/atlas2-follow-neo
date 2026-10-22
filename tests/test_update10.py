@@ -4,15 +4,15 @@ from dataclasses import replace
 from pathlib import Path
 from unittest.mock import Mock,patch
 import numpy as np
-from follow_neo.edge_search import EdgeYawSearch,yaw_override
-from follow_neo.types import Box,Kinematics,Settings
-from follow_neo.session import FollowSession
-from follow_neo.gui import FollowLabWindow
-from follow_neo.models import resolve_model,DEFAULT_MODEL
-from follow_neo.detector import OnnxDroneDetector,DetectorSettings
-from follow_neo.overlay import render_bundle,BLUE
-from follow_neo.recording import VideoRecorder,recording_size
-from follow_neo.video import Frame
+from follow_neo.control.edge_search import EdgeYawSearch,yaw_override
+from follow_neo.shared.types import Box,Kinematics,Settings
+from follow_neo.runtime.session import FollowSession
+from follow_neo.ui.window import FollowLabWindow
+from follow_neo.perception.models import resolve_model,DEFAULT_MODEL
+from follow_neo.perception.detector import OnnxDroneDetector,DetectorSettings
+from follow_neo.presentation.overlay import render_bundle,BLUE
+from follow_neo.diagnostics.recording import VideoRecorder,recording_size
+from follow_neo.capture.video import Frame
 from test_update9 import heading
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -141,7 +141,7 @@ class RecordingTests(unittest.TestCase):
         self.assertEqual(recording_size(1920,1080,'1080p',False),(1920,1080))
     def test_hardware_unavailable_falls_back_with_visible_report(self):
         import av
-        with tempfile.TemporaryDirectory() as path,patch('follow_neo.recording.probe_nvenc',return_value=(False,'test no GPU')):
+        with tempfile.TemporaryDirectory() as path,patch('follow_neo.diagnostics.recording.probe_nvenc',return_value=(False,'test no GPU')):
             r=VideoRecorder(path,'Both videos',profile='Auto')
             for i in range(4):r.submit(Frame(i,10+i*.1,np.zeros((1080,1920,3),np.uint8)),None)
             r.wait();self.assertIsNone(r.error);self.assertEqual(r.encoder,'libx264');self.assertEqual(r.size,(1280,720))

@@ -3,8 +3,8 @@ import socket
 import threading
 import time
 import unittest
-from follow_neo.telemetry import HeadingReceiver
-from follow_neo.control_transport import ControlChannel
+from follow_neo.transport.telemetry import HeadingReceiver
+from follow_neo.transport.control_transport import ControlChannel
 
 
 class HeadingStreamTests(unittest.TestCase):

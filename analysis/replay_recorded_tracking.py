@@ -10,8 +10,8 @@ from pathlib import Path
 import sys
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import cv2
-from follow_neo.controller import FollowController
-from follow_neo.types import Box,Detection,Settings
+from follow_neo.control.controller import FollowController
+from follow_neo.shared.types import Box,Detection,Settings
 
 
 def rows(path):

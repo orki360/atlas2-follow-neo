@@ -1,10 +1,10 @@
 """Full-circle search contracts with scripted heading, without aircraft I/O."""
 import unittest
 from dataclasses import asdict
-from follow_neo.types import Settings,settings_from_config,Box,Kinematics
-from follow_neo.search_test import SearchTest
-from follow_neo.recovery_search import RecoverySearch,scan_command
-from follow_neo.edge_search import yaw_override
+from follow_neo.shared.types import Settings,settings_from_config,Box,Kinematics
+from follow_neo.control.search_test import SearchTest
+from follow_neo.control.recovery_search import RecoverySearch,scan_command
+from follow_neo.control.edge_search import yaw_override
 
 
 def heading(t,angle):

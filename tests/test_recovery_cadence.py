@@ -1,13 +1,13 @@
 """Recorded cadence/ambiguity regressions, with no aircraft connection."""
 import unittest
 from dataclasses import replace
-from follow_neo.botsort_motion import BoTSORTTracker, CANDIDATE_PAUSE_SECONDS
-from follow_neo.controller import FollowController
-from follow_neo.dance import SearchSmoother, dance_command
-from follow_neo.centering import DampedTrackingController
-from follow_neo.types import Box, Detection, Settings, Kinematics
-from follow_neo.telemetry import heading_retry_seconds
-from follow_neo.recovery_search import RecoverySearch
+from follow_neo.perception.botsort_motion import BoTSORTTracker, CANDIDATE_PAUSE_SECONDS
+from follow_neo.control.controller import FollowController
+from follow_neo.control.dance import SearchSmoother, dance_command
+from follow_neo.control.centering import DampedTrackingController
+from follow_neo.shared.types import Box, Detection, Settings, Kinematics
+from follow_neo.transport.telemetry import heading_retry_seconds
+from follow_neo.control.recovery_search import RecoverySearch
 
 
 def neo(x=200,score=.9):return Detection(Box(x,180,x+60,220),score,0,'neo','original_neo',(.9,.05))

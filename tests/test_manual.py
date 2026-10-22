@@ -6,8 +6,8 @@ import threading
 import time
 import unittest
 from unittest.mock import Mock
-from follow_neo.manual import ManualControl, movement
-from follow_neo.gui import normalized_event_key
+from follow_neo.transport.manual import ManualControl, movement
+from follow_neo.ui.window import normalized_event_key
 
 
 class Server:
@@ -113,7 +113,7 @@ class ManualTests(unittest.TestCase):
 
 class KeyboardTests(unittest.TestCase):
     def setUp(self):
-        from follow_neo.gui import FollowLabWindow
+        from follow_neo.ui.window import FollowLabWindow
         self.window = FollowLabWindow.__new__(FollowLabWindow)
         self.window.root = Mock()
         self.window.canvas = Mock()
@@ -136,7 +136,7 @@ class KeyboardTests(unittest.TestCase):
                 self.assertEqual(normalized_event_key(self.event(keysym,keycode=keycode),'win32'),expected)
 
     def test_hebrew_layout_wasd_reaches_manual_control(self):
-        import follow_neo.gui as gui
+        import follow_neo.ui.window as gui
         original=gui.sys.platform
         try:
             gui.sys.platform='win32'

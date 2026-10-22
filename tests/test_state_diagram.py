@@ -1,6 +1,6 @@
 """Live diagram must never confuse perception, held search and control authority."""
 import unittest
-from follow_neo.state_diagram import diagram_snapshot,CURRENT,PREVIEW,PAUSED,ERROR
+from follow_neo.ui.state_diagram import diagram_snapshot,CURRENT,PREVIEW,PAUSED,ERROR
 
 
 class StateDiagramTests(unittest.TestCase):

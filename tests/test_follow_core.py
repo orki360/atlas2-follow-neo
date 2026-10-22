@@ -4,12 +4,12 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import unittest
 from dataclasses import replace
 import numpy as np
-from follow_neo.types import Box, Detection, Settings, Kinematics, Intent
-from follow_neo.tracker import BBoxTracker
-from follow_neo.controller import FollowController
-from follow_neo.policy import DeterministicTrackingPolicy, SmartTrackingController
-from follow_neo.spacing import VisualSpacingController
-from follow_neo.detector import OnnxDroneDetector
+from follow_neo.shared.types import Box, Detection, Settings, Kinematics, Intent
+from follow_neo.perception.tracker import BBoxTracker
+from follow_neo.control.controller import FollowController
+from follow_neo.control.policy import DeterministicTrackingPolicy, SmartTrackingController
+from follow_neo.control.spacing import VisualSpacingController
+from follow_neo.perception.detector import OnnxDroneDetector
 
 
 class TrackingTests(unittest.TestCase):

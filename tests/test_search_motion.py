@@ -1,10 +1,10 @@
 """Search-only rate stability, speed-envelope braking and BOOST gate contracts."""
 import unittest
 from unittest.mock import Mock
-from follow_neo.search_motion import SearchHeadingRate,SearchYawProfile,BOOST_MAX_SECONDS
-from follow_neo.search_test import SearchTest
-from follow_neo.edge_search import yaw_override
-from follow_neo.types import Settings,Box,Kinematics
+from follow_neo.control.search_motion import SearchHeadingRate,SearchYawProfile,BOOST_MAX_SECONDS
+from follow_neo.control.search_test import SearchTest
+from follow_neo.control.edge_search import yaw_override
+from follow_neo.shared.types import Settings,Box,Kinematics
 
 def heading(t,yaw=0,source='AircraftAttitude'):
     return dict(time=t,yaw_deg=(yaw+180)%360-180,source=source)

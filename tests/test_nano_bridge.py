@@ -7,13 +7,13 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock
 import numpy as np
-from follow_neo.nano_guard import apply_visual, guard_reason, strong_anchor, transport_visual_reason
-from follow_neo.nano_tracker import NanoWorker, AppearanceCheck, TemplateRefresh, historical_box
-from follow_neo.video import Frame
-from follow_neo.types import Box, Detection, Settings
-from follow_neo.dance import dance_command, ZERO
-from follow_neo.control_transport import ControlChannel, VISUAL_CHANGE
-from follow_neo.overlay import render_bundle
+from follow_neo.control.nano_guard import apply_visual, guard_reason, strong_anchor, transport_visual_reason
+from follow_neo.perception.nano_tracker import NanoWorker, AppearanceCheck, TemplateRefresh, historical_box
+from follow_neo.capture.video import Frame
+from follow_neo.shared.types import Box, Detection, Settings
+from follow_neo.control.dance import dance_command, ZERO
+from follow_neo.transport.control_transport import ControlChannel, VISUAL_CHANGE
+from follow_neo.presentation.overlay import render_bundle
 
 
 def visual(now=10., **changes):
@@ -108,7 +108,7 @@ class NanoGuardTests(unittest.TestCase):
         with self.assertRaises(ValueError):Settings(nano_mode='anything').validate()
 
     def test_registered_dual_models_reach_the_final_gate(self):
-        from follow_neo.models import DUAL_MODELS, DUAL_MODEL_SOURCE_NAMES, target_policy
+        from follow_neo.perception.models import DUAL_MODELS, DUAL_MODEL_SOURCE_NAMES, target_policy
         for name in DUAL_MODELS:
             d=decision(target_policy=target_policy(name,DUAL_MODEL_SOURCE_NAMES[name]))
             self.assertTrue(any(dance_command(d,10.,9.,require_target_policy=True)[0]),name)
@@ -318,7 +318,7 @@ class TemplateRefreshTests(unittest.TestCase):
 
 class NanoTransportTests(unittest.TestCase):
     def test_manual_control_checks_live_veto_while_ack_is_pending(self):
-        from follow_neo.manual import ManualControl
+        from follow_neo.transport.manual import ManualControl
         from test_control_scan_fix import AsyncServer
         from test_manual import wait_for
         peer=AsyncServer(True);veto=threading.Event();events=[]

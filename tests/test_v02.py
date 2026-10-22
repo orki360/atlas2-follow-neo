@@ -8,13 +8,13 @@ import unittest
 from unittest.mock import patch
 import av
 import numpy as np
-from follow_neo.types import Box,Detection,Settings
-from follow_neo.tracker import BBoxTracker
-from follow_neo.controller import FollowController
-from follow_neo.overlay import render_bundle,box_at_frame
-from follow_neo.video import Frame
-from follow_neo.recording import VideoRecorder
-from follow_neo.compute import create_session,provider_spec
+from follow_neo.shared.types import Box,Detection,Settings
+from follow_neo.perception.tracker import BBoxTracker
+from follow_neo.control.controller import FollowController
+from follow_neo.presentation.overlay import render_bundle,box_at_frame
+from follow_neo.capture.video import Frame
+from follow_neo.diagnostics.recording import VideoRecorder
+from follow_neo.perception.compute import create_session,provider_spec
 
 ROOT=Path(__file__).resolve().parents[1]
 
@@ -65,7 +65,7 @@ class NewBehaviorTests(unittest.TestCase):
         d['measurement_id']=99;self.assertEqual(meta['decision']['measurement_id'],1)
 
     def test_gpu_unavailable_is_explicit_and_auto_falls_back(self):
-        with patch('follow_neo.compute.platform.system',return_value='Linux'):
+        with patch('follow_neo.perception.compute.platform.system',return_value='Linux'):
             with self.assertRaisesRegex(RuntimeError,'GPU initialization failed'):
                 create_session(ROOT/'models/best.onnx','GPU')
             session,info=create_session(ROOT/'models/best.onnx','Auto')

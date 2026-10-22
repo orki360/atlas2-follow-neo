@@ -7,15 +7,15 @@ from dataclasses import replace
 from pathlib import Path
 from unittest.mock import Mock,patch
 import numpy as np
-from follow_neo.types import Settings,Box,Kinematics,Intent
-from follow_neo.telemetry import heading_snapshot,fresh_heading
-from follow_neo.recovery_search import RecoverySearch,scan_command
-from follow_neo.search_test import SearchTest
-from follow_neo.policy import DeterministicTrackingPolicy
-from follow_neo.manual import ManualControl
-from follow_neo.session import FollowSession
-from follow_neo.overlay import render_bundle
-from follow_neo.video import Frame
+from follow_neo.shared.types import Settings,Box,Kinematics,Intent
+from follow_neo.transport.telemetry import heading_snapshot,fresh_heading
+from follow_neo.control.recovery_search import RecoverySearch,scan_command
+from follow_neo.control.search_test import SearchTest
+from follow_neo.control.policy import DeterministicTrackingPolicy
+from follow_neo.transport.manual import ManualControl
+from follow_neo.runtime.session import FollowSession
+from follow_neo.presentation.overlay import render_bundle
+from follow_neo.capture.video import Frame
 from test_manual import Server,wait_for
 from test_control_scan_fix import AsyncServer
 
@@ -183,7 +183,7 @@ class DebugContracts(unittest.TestCase):
     def test_prediction_video_labels_disconnected_search(self):
         frame=Frame(1,10,np.zeros((180,640,3),np.uint8))
         d=dict(state='DIRECTIONAL_SEARCH',control_status=dict(active=False,mode='DANCE',time=10))
-        with patch('follow_neo.overlay.cv2.putText',wraps=__import__('cv2').putText) as put:
+        with patch('follow_neo.presentation.overlay.cv2.putText',wraps=__import__('cv2').putText) as put:
             _,_,metadata=render_bundle(frame,None,d,'Live prediction',now=10)
         self.assertTrue(any('CONTROL OFF - SEARCH NOT EXECUTING' in call.args[1] for call in put.call_args_list))
         self.assertFalse(metadata['control_status']['active'])

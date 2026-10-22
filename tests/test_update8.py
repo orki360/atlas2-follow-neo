@@ -5,16 +5,16 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from dataclasses import replace
 from unittest.mock import Mock,patch
 import numpy as np
-from follow_neo.types import Box,Detection,Settings,Intent,settings_from_config
-from follow_neo.controller import FollowController
-from follow_neo.spacing import VisualSpacingController
-from follow_neo.dance import dance_command,ZERO
-from follow_neo.edge_search import yaw_override
-from follow_neo.video import LatestValue,VideoReceiver,Frame
-from follow_neo.session import FollowSession
-from follow_neo.detector import DetectorSettings
-from follow_neo.cadence import FrameRateGate
-from follow_neo.manual import ManualControl
+from follow_neo.shared.types import Box,Detection,Settings,Intent,settings_from_config
+from follow_neo.control.controller import FollowController
+from follow_neo.control.spacing import VisualSpacingController
+from follow_neo.control.dance import dance_command,ZERO
+from follow_neo.control.edge_search import yaw_override
+from follow_neo.capture.video import LatestValue,VideoReceiver,Frame
+from follow_neo.runtime.session import FollowSession
+from follow_neo.perception.detector import DetectorSettings
+from follow_neo.capture.cadence import FrameRateGate
+from follow_neo.transport.manual import ManualControl
 from test_manual import Server,wait_for
 
 
@@ -165,7 +165,7 @@ class CadenceTests(unittest.TestCase):
         published=[];r=VideoReceiver('127.0.0.1',processing_fps=30,on_frame=published.append)
         for i in range(120):
             stamp=10+i/60
-            with patch('follow_neo.video.time.monotonic',return_value=stamp):
+            with patch('follow_neo.capture.video.time.monotonic',return_value=stamp):
                 r._publish_decoded(decoded,stamp);r._publish_pending(stamp)
         self.assertEqual(r.count,120);self.assertEqual(r.processed_count,60)
         self.assertEqual(r.sampled_out,59);self.assertEqual(r.sampler.snapshot()['pending'],1)
@@ -232,7 +232,7 @@ class SessionSchedulingTests(unittest.TestCase):
     def run_pipeline(self,reconfigure):
         """Real worker threads with a controlled detector; never open a socket."""
         temp=tempfile.TemporaryDirectory();self.addCleanup(temp.cleanup)
-        with patch('follow_neo.session.resolve_model',return_value=(Path(temp.name)/'model.onnx',{'name':'test model'})):
+        with patch('follow_neo.runtime.session.resolve_model',return_value=(Path(temp.name)/'model.onnx',{'name':'test model'})):
             # Isolate latest-frame scheduling from intentional FPS throttling.
             session=FollowSession(temp.name,'127.0.0.1',
                                   settings=Settings(video_fps=30.,inference_fps=30.))
@@ -258,7 +258,7 @@ class SessionSchedulingTests(unittest.TestCase):
         self.addCleanup(cleanup)
         def frame(fid):
             session.receiver.frames.set(Frame(fid,time.monotonic(),np.full((20,20,3),fid,np.uint8)))
-        with patch('follow_neo.session.OnnxDroneDetector',return_value=detector):
+        with patch('follow_neo.runtime.session.OnnxDroneDetector',return_value=detector):
             session.receiver.state='STREAMING'
             session.inference_thread.start();session.control_thread.start()
             frame(1);self.assertTrue(entered.wait(2))

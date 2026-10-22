@@ -4,14 +4,14 @@ import math
 import unittest
 import time
 from unittest.mock import Mock
-from follow_neo.nano_guard import apply_visual,visual_agreement,transport_visual_reason
-from follow_neo.nano_tracker import NanoWorker
-from follow_neo.search_sectors import SectorSweep
-from follow_neo.recovery_search import RecoverySearch
-from follow_neo.pursuit import RecoveryVector,recovery_vector
-from follow_neo.dance import dance_command,ZERO
-from follow_neo.types import Settings,Kinematics
-from follow_neo.centering import DampedTrackingController
+from follow_neo.control.nano_guard import apply_visual,visual_agreement,transport_visual_reason
+from follow_neo.perception.nano_tracker import NanoWorker
+from follow_neo.control.search_sectors import SectorSweep
+from follow_neo.control.recovery_search import RecoverySearch
+from follow_neo.control.pursuit import RecoveryVector,recovery_vector
+from follow_neo.control.dance import dance_command,ZERO
+from follow_neo.shared.types import Settings,Kinematics
+from follow_neo.control.centering import DampedTrackingController
 import test_tracking_recovery8 as previous
 
 
@@ -222,14 +222,14 @@ class RecoveryVectorTests(unittest.TestCase):
         self.assertEqual(m.snapshot(),before)
 
     def test_controller_restart_discards_saved_motion(self):
-        from follow_neo.controller import FollowController
+        from follow_neo.control.controller import FollowController
         c=FollowController('botsort',0,'neo');_,_,c.recovery_vector=vector_case()
         self.assertIsNotNone(c.recovery_vector.snapshot())
         c.restart_control();self.assertIsNone(c.recovery_vector.snapshot())
 
     def test_live_controller_seeds_from_real_botsort_target_then_expires(self):
-        from follow_neo.controller import FollowController
-        from follow_neo.types import Box,Detection
+        from follow_neo.control.controller import FollowController
+        from follow_neo.shared.types import Box,Detection
         c=FollowController('botsort',0,'neo');s=Settings()
         for i in range(14):
             t=10+i*.1;now=t+.12
@@ -282,7 +282,7 @@ class CombinedMotionTests(unittest.TestCase):
 
 class RecoveryTransportTests(unittest.TestCase):
     def test_search_translation_obeys_gui_caps_and_stops_at_original_expiry(self):
-        from follow_neo.manual import ManualControl
+        from follow_neo.transport.manual import ManualControl
         from test_manual import Server,wait_for
         peer=Server();events=[];source=time.monotonic()+.30
         seed,vis,_=vector_case();shift=source-9.88

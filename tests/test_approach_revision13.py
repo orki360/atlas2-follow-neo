@@ -1,11 +1,11 @@
 import unittest
 from unittest.mock import patch
 import numpy as np
-from follow_neo.approach import LateralEvidence,forward_diagnostics,forward_status_text
-from follow_neo.centering import DampedTrackingController
-from follow_neo.types import Settings,Kinematics,Box,Detection
-from follow_neo.controller import FollowController
-from follow_neo.dance import DanceSmoother
+from follow_neo.control.approach import LateralEvidence,forward_diagnostics,forward_status_text
+from follow_neo.control.centering import DampedTrackingController
+from follow_neo.shared.types import Settings,Kinematics,Box,Detection
+from follow_neo.control.controller import FollowController
+from follow_neo.control.dance import DanceSmoother
 from follow_neo.vendor.botsort.kalman_filter import KalmanFilter,positive_covariance
 
 

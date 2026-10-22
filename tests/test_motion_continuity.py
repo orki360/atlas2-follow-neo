@@ -5,14 +5,14 @@ import time
 import unittest
 from dataclasses import asdict
 from unittest.mock import Mock, patch
-from follow_neo.approach import LateralEvidence
-from follow_neo.centering import DampedTrackingController
-from follow_neo.control_transport import ControlChannel, VISUAL_CHANGE
-from follow_neo.dance import DanceSmoother, dance_command
-from follow_neo.motion_continuity import pending_motion_status
-from follow_neo.nano_guard import apply_visual, guard_reason
-from follow_neo.recovery_search import RecoverySearch, HEADING_PAUSE_SECONDS
-from follow_neo.types import Settings, Kinematics, settings_from_config
+from follow_neo.control.approach import LateralEvidence
+from follow_neo.control.centering import DampedTrackingController
+from follow_neo.transport.control_transport import ControlChannel, VISUAL_CHANGE
+from follow_neo.control.dance import DanceSmoother, dance_command
+from follow_neo.control.motion_continuity import pending_motion_status
+from follow_neo.control.nano_guard import apply_visual, guard_reason
+from follow_neo.control.recovery_search import RecoverySearch, HEADING_PAUSE_SECONDS
+from follow_neo.shared.types import Settings, Kinematics, settings_from_config
 from test_nano_bridge import decision, visual
 from test_visual_continuity import GOOD
 import test_nano_handoff as handoff_cases
@@ -148,7 +148,7 @@ class DelayedAckTests(unittest.TestCase):
                 latest['nano'].update(blocked=True,reason='appearance_or_background_drift')
             s=PendingPermissionTests().status(sent,latest,now[0]);statuses.append(s)
             return VISUAL_CHANGE if s['reason'] else None
-        with patch('follow_neo.control_transport.time.monotonic',side_effect=lambda:now[0]):
+        with patch('follow_neo.transport.control_transport.time.monotonic',side_effect=lambda:now[0]):
             c=ControlChannel(peer,guard,lambda e,d:events.append((e,d)))
             ok=c.command('rc 0.0200 0 0 0.0135',motion_keys=frozenset())
         return c,peer,ok,statuses,events
@@ -172,7 +172,7 @@ class DelayedAckTests(unittest.TestCase):
 
 class ManualHandoffTests(unittest.TestCase):
     def test_live_manual_path_logs_renewal_and_keeps_forward_between_10hz_results(self):
-        from follow_neo.manual import ManualControl
+        from follow_neo.transport.manual import ManualControl
         from test_manual import Server,wait_for
         events=[]
         def delay(cmd):

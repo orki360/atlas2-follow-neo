@@ -9,12 +9,12 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import numpy as np
-from follow_neo.detector import DetectorSettings, OnnxDroneDetector
-from follow_neo.gui import FollowLabWindow
-from follow_neo.models import (DEFAULT_MODEL, MID_RES_MODEL, HIGH_RES_MODEL, DUAL_MODELS,
+from follow_neo.perception.detector import DetectorSettings, OnnxDroneDetector
+from follow_neo.ui.window import FollowLabWindow
+from follow_neo.perception.models import (DEFAULT_MODEL, MID_RES_MODEL, HIGH_RES_MODEL, DUAL_MODELS,
     DUAL_MODEL_SOURCE_NAMES, model_from_config, resolve_model, target_policy)
-from follow_neo.session import FollowSession
-from follow_neo.video import Frame
+from follow_neo.runtime.session import FollowSession
+from follow_neo.capture.video import Frame
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -29,7 +29,7 @@ def detector(name=HIGH_RES_MODEL, shape=(1,3,1088,1920), outputs=None,
     session.get_modelmeta.return_value = SimpleNamespace(custom_metadata_map={
         'names': repr(names if names is not None else DUAL_MODEL_SOURCE_NAMES[name]),
         'end2end': end2end})
-    with patch('follow_neo.compute.create_session', return_value=(session, {})):
+    with patch('follow_neo.perception.compute.create_session', return_value=(session, {})):
         return OnnxDroneDetector(ROOT/'models'/name, DetectorSettings(confidence=.31))
 
 
@@ -135,7 +135,7 @@ class ModelResolutionTests(unittest.TestCase):
 
     def test_session_apply_retains_resolution_and_logs_verified_policy(self):
         with tempfile.TemporaryDirectory() as folder:
-            with patch('follow_neo.session.resolve_model', return_value=(ROOT/'models'/HIGH_RES_MODEL, {'name':HIGH_RES_MODEL})):
+            with patch('follow_neo.runtime.session.resolve_model', return_value=(ROOT/'models'/HIGH_RES_MODEL, {'name':HIGH_RES_MODEL})):
                 s = FollowSession(folder, '127.0.0.1', model_name=HIGH_RES_MODEL)
             d = detector()
             seen = []
@@ -158,7 +158,7 @@ class ModelResolutionTests(unittest.TestCase):
                 return Frame(fid,time.monotonic(),np.zeros((1080,1920,3),np.uint8)), fid
             s.receiver.frames.wait_next = Mock(side_effect=next_frame)
             try:
-                with patch('follow_neo.session.OnnxDroneDetector', return_value=d):
+                with patch('follow_neo.runtime.session.OnnxDroneDetector', return_value=d):
                     s._infer()
                 self.assertIsNone(s.model_error)
                 self.assertEqual(seen, [(1920,1088,.45),(1920,1088,.6)])

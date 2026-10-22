@@ -6,13 +6,13 @@ import unittest
 from dataclasses import replace
 from types import SimpleNamespace
 import numpy as np
-from follow_neo.centering import DampedTrackingController, HeadingRate
-from follow_neo.control_transport import ControlChannel
-from follow_neo.control_status import acknowledged_command_text
-from follow_neo.dance import DanceSmoother
-from follow_neo.botsort_tracker import BoTSORTTracker
-from follow_neo.recovery_search import RecoverySearch
-from follow_neo.types import Box, Detection, Kinematics, Settings, settings_from_config
+from follow_neo.control.centering import DampedTrackingController, HeadingRate
+from follow_neo.transport.control_transport import ControlChannel
+from follow_neo.control.control_status import acknowledged_command_text
+from follow_neo.control.dance import DanceSmoother
+from follow_neo.perception.botsort_tracker import BoTSORTTracker
+from follow_neo.control.recovery_search import RecoverySearch
+from follow_neo.shared.types import Box, Detection, Kinematics, Settings, settings_from_config
 
 
 def heading(t,yaw=0):return dict(time=t,yaw_deg=yaw,source='test')

@@ -1,4 +1,4 @@
-"""Release 14.0.2: presentation-only Real-Time plus the existing release gate."""
+"""Existing tracking/TCP release gate, also used by the process-isolation build."""
 import sys
 import unittest
 from pathlib import Path

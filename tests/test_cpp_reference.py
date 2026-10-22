@@ -6,9 +6,9 @@ input and not Mini 4 Pro flight behavior. Kalman has separate invariant tests.
 import sys,json,math,unittest
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from follow_neo.policy import DeterministicTrackingPolicy,SmartTrackingController
-from follow_neo.spacing import VisualSpacingController
-from follow_neo.types import Intent,Kinematics,Settings
+from follow_neo.control.policy import DeterministicTrackingPolicy,SmartTrackingController
+from follow_neo.control.spacing import VisualSpacingController
+from follow_neo.shared.types import Intent,Kinematics,Settings
 
 
 class CppReferenceTests(unittest.TestCase):

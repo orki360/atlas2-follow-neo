@@ -4,8 +4,8 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import time
 import unittest
 from unittest.mock import Mock
-from follow_neo.dance import dance_command, ZERO
-from follow_neo.manual import ManualControl
+from follow_neo.control.dance import dance_command, ZERO
+from follow_neo.transport.manual import ManualControl
 from test_manual import Server, wait_for
 
 
@@ -98,7 +98,7 @@ class DanceTests(unittest.TestCase):
         self.assertEqual(control.mode,'DANCE')
 
     def test_session_records_acknowledged_commands(self):
-        from follow_neo.session import FollowSession
+        from follow_neo.runtime.session import FollowSession
         session=FollowSession.__new__(FollowSession)
         session.log=Mock(); session.flight_commands_sent=0
         session.record_control('flight_command',{'server_acknowledged':True,'mode':'DANCE'})
@@ -107,7 +107,7 @@ class DanceTests(unittest.TestCase):
         self.assertEqual(session.log.write.call_count,2)
 
     def test_gui_refuses_different_phone(self):
-        from follow_neo.gui import FollowLabWindow
+        from follow_neo.ui.window import FollowLabWindow
         window=FollowLabWindow.__new__(FollowLabWindow)
         window.manual=Mock(mode='MANUAL',host='192.168.1.2',enabled=True)
         window.session=Mock(model_error=None,model_info={'ready':True})
@@ -117,7 +117,7 @@ class DanceTests(unittest.TestCase):
         self.assertIsNone(window.dance_decision())
 
     def test_terminal_spacing_ends_activation_and_requires_restart(self):
-        from follow_neo.gui import FollowLabWindow
+        from follow_neo.ui.window import FollowLabWindow
         window=FollowLabWindow.__new__(FollowLabWindow)
         window.dance_selected=True; window.dance_terminal_seen=False
         window.manual=Mock(mode='DANCE',dance_started=10.)
@@ -133,7 +133,7 @@ class DanceTests(unittest.TestCase):
         self.assertFalse(window.finish_terminal_dance(terminal))
 
     def test_old_terminal_decision_cannot_cancel_new_dance(self):
-        from follow_neo.gui import FollowLabWindow
+        from follow_neo.ui.window import FollowLabWindow
         window=FollowLabWindow.__new__(FollowLabWindow)
         window.dance_selected=True; window.dance_terminal_seen=False
         window.manual=Mock(mode='DANCE',dance_started=12.)

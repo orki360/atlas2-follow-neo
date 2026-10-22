@@ -10,18 +10,18 @@ from types import SimpleNamespace
 from unittest.mock import Mock,patch
 
 import numpy as np
-from follow_neo.controller import FollowController
-from follow_neo.dance import dance_command,ZERO
-from follow_neo.detector import OnnxDroneDetector,DetectorSettings
-from follow_neo.gui import FollowLabWindow
-from follow_neo.manual import ManualControl
-from follow_neo.models import (DEFAULT_MODEL,PREVIOUS_MODEL,LEGACY_MODEL,
+from follow_neo.control.controller import FollowController
+from follow_neo.control.dance import dance_command,ZERO
+from follow_neo.perception.detector import OnnxDroneDetector,DetectorSettings
+from follow_neo.ui.window import FollowLabWindow
+from follow_neo.transport.manual import ManualControl
+from follow_neo.perception.models import (DEFAULT_MODEL,PREVIOUS_MODEL,LEGACY_MODEL,
     DUAL_CLASS_NAMES,DUAL_SOURCE_NAMES,model_from_config,resolve_model,target_policy)
-from follow_neo.overlay import render_bundle,NEO_COLOR,MINI_COLOR
-from follow_neo.session import FollowSession
-from follow_neo.types import Box,Detection,Settings,settings_from_config
-from follow_neo.video import Frame
-from follow_neo.prediction import COAST_YAW,COAST_VERTICAL
+from follow_neo.presentation.overlay import render_bundle,NEO_COLOR,MINI_COLOR
+from follow_neo.runtime.session import FollowSession
+from follow_neo.shared.types import Box,Detection,Settings,settings_from_config
+from follow_neo.capture.video import Frame
+from follow_neo.perception.prediction import COAST_YAW,COAST_VERTICAL
 from test_manual import Server,wait_for
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -85,7 +85,7 @@ class DecodeTests(unittest.TestCase):
         session.get_outputs.return_value=[SimpleNamespace(shape=[1,38,8400]),SimpleNamespace(shape=[1,32,160,160])]
         for names in ({0:'minip4',1:DUAL_SOURCE_NAMES[0]}, {0:'neo'}, {1:'minip4'}):
             session.get_modelmeta.return_value=SimpleNamespace(custom_metadata_map={'names':repr(names)})
-            with patch('follow_neo.compute.create_session',return_value=(session,{})):
+            with patch('follow_neo.perception.compute.create_session',return_value=(session,{})):
                 with self.assertRaisesRegex(RuntimeError,'class 0'):
                     OnnxDroneDetector(ROOT/'models'/DEFAULT_MODEL,compute_mode='CPU')
     def test_previous_single_class_model_still_loads_for_display(self):
@@ -272,7 +272,7 @@ class DisplayAndConfigTests(unittest.TestCase):
         analysis=dict(result=dict(frame=frame,detections=ds,inference_ms=1.),decision=d,
             selected_box=dict(zip(('x1','y1','x2','y2'),ds[0]['box'])),selected_class_id=0)
         for mode in ('Analyzed frame','Live prediction'):
-            with patch('follow_neo.overlay.draw_box') as draw:
+            with patch('follow_neo.presentation.overlay.draw_box') as draw:
                 _,_,meta=render_bundle(frame,analysis,d,mode,now=10.05)
             calls=draw.call_args_list;self.assertEqual(len(calls),2)
             self.assertIn('neo',calls[0].args[3]);self.assertIn('SELECTED',calls[0].args[3])
@@ -292,14 +292,14 @@ class DisplayAndConfigTests(unittest.TestCase):
         w.ip=Mock(get=Mock(return_value='127.0.0.1'));w.log_control=Mock();w.dance_decision=Mock()
         w.current_axis_limits=Mock(return_value=dict(yaw=.5,vertical=.5,roll=.015,forward=.015))
         w.dance_selected=False;w.canvas=Mock();w.clear_keyboard_input=Mock()
-        with patch('follow_neo.gui.ManualControl') as constructor:w.toggle_manual()
+        with patch('follow_neo.ui.window.ManualControl') as constructor:w.toggle_manual()
         self.assertIs(constructor.call_args.kwargs['require_target_policy'],True)
 
 
 class SessionClassTests(unittest.TestCase):
     def test_live_worker_keeps_class_provenance_and_filter_counts_in_log(self):
         with tempfile.TemporaryDirectory() as folder:
-            with patch('follow_neo.session.resolve_model',return_value=(Path(folder)/DEFAULT_MODEL,{'name':'test model'})):
+            with patch('follow_neo.runtime.session.resolve_model',return_value=(Path(folder)/DEFAULT_MODEL,{'name':'test model'})):
                 s=FollowSession(folder,'127.0.0.1',settings=Settings(confidence=.8,new_track_confidence=.8))
             s.target_policy=target_policy(DEFAULT_MODEL,DUAL_SOURCE_NAMES)
             s.receiver.state='STREAMING';s.control_thread.start()

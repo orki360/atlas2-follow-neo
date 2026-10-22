@@ -4,8 +4,8 @@ import threading
 import time
 import unittest
 from unittest.mock import patch
-from follow_neo.control_transport import ControlChannel,UNEXPECTED_REPLY,ZERO
-from follow_neo.manual import ManualControl
+from follow_neo.transport.control_transport import ControlChannel,UNEXPECTED_REPLY,ZERO
+from follow_neo.transport.manual import ManualControl
 from test_dance import decision
 from test_manual import wait_for
 
@@ -36,7 +36,7 @@ class MarkerPeer:
 class NeutralSynchronizationTests(unittest.TestCase):
     def case(self,variant='ok',allowed=lambda:True):
         now=[10.];peer=MarkerPeer(now,variant);events=[]
-        with patch('follow_neo.control_transport.time.monotonic',side_effect=lambda:now[0]):
+        with patch('follow_neo.transport.control_transport.time.monotonic',side_effect=lambda:now[0]):
             c=ControlChannel(peer,lambda keys:None,lambda e,d:events.append((e,d)))
             c._unmatched(b'success\r\n')
             ok=c.synchronize_neutral(allowed)

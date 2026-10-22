@@ -2,10 +2,10 @@
 import unittest
 from dataclasses import replace
 from unittest.mock import Mock
-from follow_neo.recovery_search import RecoverySearch
-from follow_neo.edge_search import yaw_override
-from follow_neo.dance import dance_command
-from follow_neo.types import Box,Kinematics,Settings
+from follow_neo.control.recovery_search import RecoverySearch
+from follow_neo.control.edge_search import yaw_override
+from follow_neo.control.dance import dance_command
+from follow_neo.shared.types import Box,Kinematics,Settings
 
 
 def heading(t,yaw=0.):return dict(time=t,yaw_deg=yaw,source='AircraftAttitude')

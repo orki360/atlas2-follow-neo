@@ -6,9 +6,9 @@ import cv2
 parser=argparse.ArgumentParser();parser.add_argument('--source',required=True);parser.add_argument('--output',required=True)
 parser.add_argument('--logs',default='D:/projects/vers1_integration_yam/logs/20260928_125435_be0292')
 args=parser.parse_args();sys.path.insert(0,str(Path(args.source).resolve()))
-from follow_neo.controller import FollowController
-from follow_neo.types import Settings,Detection,Box
-from follow_neo.botsort_tracker import BoTSORTTracker
+from follow_neo.control.controller import FollowController
+from follow_neo.shared.types import Settings,Detection,Box
+from follow_neo.perception.botsort_tracker import BoTSORTTracker
 cv2.setNumThreads(2)
 root=Path(args.logs)
 events=[json.loads(line) for line in (root/'events.jsonl').open(encoding='utf-8')]

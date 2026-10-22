@@ -4,13 +4,13 @@ from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from dataclasses import asdict
 import numpy as np
-from follow_neo.tracker import BBoxTracker
-from follow_neo.types import Box,Detection,Settings
-from follow_neo.controller import FollowController
-from follow_neo.dance import dance_command,ZERO
-from follow_neo.overlay import box_at_frame
-from follow_neo.video import Frame
-from follow_neo.manual import ManualControl
+from follow_neo.perception.tracker import BBoxTracker
+from follow_neo.shared.types import Box,Detection,Settings
+from follow_neo.control.controller import FollowController
+from follow_neo.control.dance import dance_command,ZERO
+from follow_neo.presentation.overlay import box_at_frame
+from follow_neo.capture.video import Frame
+from follow_neo.transport.manual import ManualControl
 from test_manual import Server,wait_for
 
 

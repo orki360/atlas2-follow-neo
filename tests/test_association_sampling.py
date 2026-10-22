@@ -8,12 +8,12 @@ from dataclasses import asdict,replace
 from types import SimpleNamespace
 from unittest.mock import Mock,patch
 import numpy as np
-from follow_neo.types import Settings,settings_from_config,Detection,Box
-from follow_neo.controller import FollowController
-from follow_neo.botsort_motion import BoTSORTTracker
+from follow_neo.shared.types import Settings,settings_from_config,Detection,Box
+from follow_neo.control.controller import FollowController
+from follow_neo.perception.botsort_motion import BoTSORTTracker
 from follow_neo.vendor.botsort.bot_sort import BoTSORT
-from follow_neo.cadence import FrameRateGate,LatestFrameSampler
-from follow_neo.video import VideoReceiver
+from follow_neo.capture.cadence import FrameRateGate,LatestFrameSampler
+from follow_neo.capture.video import VideoReceiver
 
 
 def detection(x=200,score=.9,cls=0):
@@ -144,7 +144,7 @@ class SamplingTests(unittest.TestCase):
     def test_conversion_is_deferred_and_source_time_preserved(self):
         frames=[];r=VideoReceiver('offline.invalid',on_frame=frames.append)
         image=Mock(to_ndarray=Mock(return_value=np.zeros((8,8,3),np.uint8)))
-        with patch('follow_neo.video.time.monotonic',return_value=10.02):
+        with patch('follow_neo.capture.video.time.monotonic',return_value=10.02):
             r._publish_decoded(image,10.)
             image.to_ndarray.assert_not_called()
             self.assertTrue(r._publish_pending(10.02))
@@ -157,7 +157,7 @@ class SamplingTests(unittest.TestCase):
             r._invalidate_stream(ConnectionError('offline'),retry_seconds=.5)
             return np.zeros((8,8,3),np.uint8)
         image.to_ndarray.side_effect=convert
-        with patch('follow_neo.video.time.monotonic',return_value=10.01):
+        with patch('follow_neo.capture.video.time.monotonic',return_value=10.01):
             r._publish_decoded(image,10.)
             self.assertFalse(r._publish_pending(10.01))
         self.assertIsNone(r.frames.get());self.assertEqual(r.stream_epoch,1)
@@ -165,7 +165,7 @@ class SamplingTests(unittest.TestCase):
     def test_conversion_that_takes_too_long_is_discarded(self):
         r=VideoReceiver('offline.invalid');image=Mock(to_ndarray=Mock(return_value=None))
         r._publish_decoded(image,10.)
-        with patch('follow_neo.video.time.monotonic',return_value=10.2):
+        with patch('follow_neo.capture.video.time.monotonic',return_value=10.2):
             self.assertFalse(r._publish_pending(10.01))
         self.assertIsNone(r.frames.get());self.assertEqual(r.processed_count,0)
 

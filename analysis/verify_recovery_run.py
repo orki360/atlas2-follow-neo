@@ -12,8 +12,8 @@ import sys
 sys.dont_write_bytecode=True
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
-from follow_neo.dance import dance_command
-from follow_neo.models import NEO_CLASS_ID,NEO_CLASS_NAME
+from follow_neo.control.dance import dance_command
+from follow_neo.perception.models import NEO_CLASS_ID,NEO_CLASS_NAME
 
 
 def measurement_key(decision):

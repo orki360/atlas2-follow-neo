@@ -3,9 +3,9 @@ from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import unittest
 from unittest.mock import Mock
-from follow_neo.control_status import control_indicator
-from follow_neo.gui import FollowLabWindow
-from follow_neo.models import DEFAULT_MODEL
+from follow_neo.control.control_status import control_indicator
+from follow_neo.ui.window import FollowLabWindow
+from follow_neo.perception.models import DEFAULT_MODEL
 
 
 def control(**kwargs):

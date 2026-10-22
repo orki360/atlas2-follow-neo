@@ -1,5 +1,35 @@
 # CHANGELOG — Dancing Drones / Follow NEO
 
+## Version 14.1.1 — Session teardown and acknowledged TCP release — 2026-10-22
+
+- Ignore late display logging for retired sessions; keep stale session actions
+  rejected. Guard GUI logging while closing and report session-stop failures.
+- Stop control before retiring its log. Drain outstanding replies during terminal
+  release; use the existing neutral synchronization marker for eligible extra
+  success replies before awaiting disable. Never re-enable during shutdown.
+- Track a release already in progress so a concurrent disconnect still verifies
+  its acknowledgement. Unverified shutdown remains explicit in status and logs.
+- Preserve tracking algorithms, motion deadlines, TCP and Real-Time behavior.
+  No Android changes. Add offline lifecycle and shutdown regression coverage.
+
+## Version 14.1.0 — GUI process isolation on original TCP — 2026-10-22
+
+- Default launcher uses a spawned runtime process; Tk remains in the UI process.
+  Capture, inference, Nano, BoT, control, recording and original TCP workers stay
+  together in that runtime. `--runtime inline` retains the comparison path.
+- Preserve source timestamps across IPC, a bounded latest-only input mailbox,
+  release fencing and explicit expiry of delayed operator actions. GUI snapshots
+  cannot authorize flight. No automatic runtime restart or authority restoration.
+- Use bounded shared BGR preview slots and a metadata mailbox; never queue old
+  frames. Real-Time sends no preview pixels and retains the original tracking.
+- Group components into functional packages. Remove the 39 temporary root
+  compatibility aliases; application, analysis tools and tests import the
+  component packages directly, including mock targets and dynamic imports.
+- Record comparable control, inference, GUI and IPC timing windows. Add a
+  read-only log comparison tool and a process/inline experiment guide.
+- Keep tracking policy, source-age limits, TCP protocol and Android unchanged.
+  No UDP, APK changes or remote Git updates.
+
 ## Version 14.0.2 — Real-Time presentation mode on original TCP — 2026-10-22
 
 - Add an explicit Real-Time ON/OFF button. Camera decoding, YOLO, BoT-SORT,

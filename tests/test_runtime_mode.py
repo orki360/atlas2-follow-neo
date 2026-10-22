@@ -10,14 +10,14 @@ import unittest
 from unittest.mock import Mock, patch
 
 import numpy as np
-from follow_neo.gui import FollowLabWindow
-from follow_neo.manual import ManualControl
-from follow_neo.recording import VideoRecorder
-from follow_neo.runtime_mode import RuntimeStats, keep_realtime_event
-from follow_neo.session import FollowSession, SessionLog
-from follow_neo.types import Settings
-from follow_neo.video import Frame, VideoReceiver
-from follow_neo.video_diagnostics import VideoDiagnostics
+from follow_neo.ui.window import FollowLabWindow
+from follow_neo.transport.manual import ManualControl
+from follow_neo.diagnostics.recording import VideoRecorder
+from follow_neo.diagnostics.runtime_mode import RuntimeStats, keep_realtime_event
+from follow_neo.runtime.session import FollowSession, SessionLog
+from follow_neo.shared.types import Settings
+from follow_neo.capture.video import Frame, VideoReceiver
+from follow_neo.capture.video_diagnostics import VideoDiagnostics
 from test_manual import Server as FakeServer, wait_for
 
 
@@ -26,8 +26,8 @@ class RuntimeModeTests(unittest.TestCase):
         folder=tempfile.TemporaryDirectory();self.addCleanup(folder.cleanup)
         nano=Mock();nano.snapshot.return_value={};nano.at_frame.return_value={}
         nano.evidence_at.return_value=None
-        with patch('follow_neo.session.resolve_model',return_value=(Path(folder.name)/'test.onnx',{})), \
-             patch('follow_neo.session.NanoWorker',return_value=nano):
+        with patch('follow_neo.runtime.session.resolve_model',return_value=(Path(folder.name)/'test.onnx',{})), \
+             patch('follow_neo.runtime.session.NanoWorker',return_value=nano):
             session=FollowSession(folder.name,'offline.invalid',**kwargs)
         self.addCleanup(session.stop)
         return session
@@ -101,9 +101,9 @@ class RuntimeModeTests(unittest.TestCase):
     def test_runtime_rates_do_not_depend_on_gui_or_change_measurement_time(self):
         s=self.session(real_time=True);s.log.write=Mock()
         d=dict(state='TRACK',measurement_time=9.9);s.decision.set(d)
-        with patch('follow_neo.session.time.monotonic',return_value=10.):s._runtime_health({})
+        with patch('follow_neo.runtime.session.time.monotonic',return_value=10.):s._runtime_health({})
         s.receiver.count=60;s.receiver.processed_count=42;s.inference_count=12
-        with patch('follow_neo.session.time.monotonic',return_value=11.):s._runtime_health({})
+        with patch('follow_neo.runtime.session.time.monotonic',return_value=11.):s._runtime_health({})
         data=s.log.write.call_args.args[1]
         self.assertEqual((data['input_fps'],data['processed_fps'],data['inference_fps']),(60,42,12))
         self.assertAlmostEqual(data['measurement_age_ms'],1100)
@@ -138,8 +138,8 @@ class RuntimeModeTests(unittest.TestCase):
             if i==2:receiver.stop_event.set()
             return bytes([i+1])
         sock.recv.side_effect=receive
-        with patch('follow_neo.video.socket.create_connection',return_value=sock), \
-             patch('follow_neo.video.av.CodecContext',Mock(create=Mock(return_value=codec))):
+        with patch('follow_neo.capture.video.socket.create_connection',return_value=sock), \
+             patch('follow_neo.capture.video.av.CodecContext',Mock(create=Mock(return_value=codec))):
             receiver._receive_stream(recording)
         self.assertEqual(receiver.count,3);self.assertEqual(receiver.bytes,3)
         self.assertEqual(codec.decode.call_count,3)
@@ -151,8 +151,8 @@ class RuntimeModeTests(unittest.TestCase):
         w.real_time=True;w.runtime_ui_at=10.;w.pressed={'up'};w.root=Mock()
         w.reconcile_keyboard=Mock();w.manual=Mock();w.manual.thread.is_alive.return_value=True
         w.dance_decision=Mock(return_value={'state':'TRACK'});w.finish_terminal_dance=Mock(return_value=False)
-        with patch('follow_neo.gui.time.monotonic',return_value=10.01), \
-             patch('follow_neo.gui.render_bundle',side_effect=AssertionError('rendered')):
+        with patch('follow_neo.ui.window.time.monotonic',return_value=10.01), \
+             patch('follow_neo.ui.window.render_bundle',side_effect=AssertionError('rendered')):
             for _ in range(3):w.refresh()
         self.assertEqual(w.manual.update.call_count,3);self.assertEqual(w.reconcile_keyboard.call_count,3)
         self.assertEqual(w.root.after.call_count,3)
@@ -163,9 +163,9 @@ class RuntimeModeTests(unittest.TestCase):
         w.root=Mock();w.root.after_idle.side_effect=lambda callback:callback()
         w.canvas=object();w.realtime_button=object();w.manual=Mock(wanted=True)
         w.clear_keyboard_input=Mock();w.log_control=Mock();w.pressed={'up'};w.closing=False
-        with patch('follow_neo.gui.safe_focus_widget',return_value=w.realtime_button):w.focus_out(None)
+        with patch('follow_neo.ui.window.safe_focus_widget',return_value=w.realtime_button):w.focus_out(None)
         w.manual.pause_control.assert_not_called();self.assertEqual(w.pressed,{'up'})
-        with patch('follow_neo.gui.safe_focus_widget',return_value=None):w.focus_out(None)
+        with patch('follow_neo.ui.window.safe_focus_widget',return_value=None):w.focus_out(None)
         w.manual.pause_control.assert_called_once();w.clear_keyboard_input.assert_called_once_with('focus_lost')
 
     def test_original_tcp_keeps_movement_release_and_heartbeat_guard_in_compact_mode(self):
@@ -205,8 +205,8 @@ class RuntimeModeTests(unittest.TestCase):
                 s.result.set(dict(frame=frame,generation=0,detections=boxes,completed_at=clock[0]-.01,
                                   inference_ms=10,preprocess_ms=1,postprocess_ms=1))
             s.control_wake=Mock();s.control_wake.wait.side_effect=feed
-            with patch('follow_neo.session.time.monotonic',side_effect=lambda:clock[0]), \
-                 patch('follow_neo.session.heading_snapshot',side_effect=lambda receiver:({'time':clock[0],'yaw_deg':0,'source':'offline_test'},clock[0])):
+            with patch('follow_neo.runtime.session.time.monotonic',side_effect=lambda:clock[0]), \
+                 patch('follow_neo.runtime.session.heading_snapshot',side_effect=lambda receiver:({'time':clock[0],'yaw_deg':0,'source':'offline_test'},clock[0])):
                 s._control()
             self.assertIsNone(s.model_error)
             self.assertEqual(len(trace),60)
@@ -223,7 +223,7 @@ class RuntimeModeTests(unittest.TestCase):
             entered.set()
             if not release.wait(3):raise RuntimeError('test release timeout')
             return encode(output,source,pts)
-        with tempfile.TemporaryDirectory() as folder, patch('follow_neo.recording.probe_nvenc',return_value=(False,'test')), \
+        with tempfile.TemporaryDirectory() as folder, patch('follow_neo.diagnostics.recording.probe_nvenc',return_value=(False,'test')), \
              patch.object(VideoRecorder,'_encode',staticmethod(delayed)):
             recorder=VideoRecorder(folder,'Clean video',profile='Auto')
             pixels=np.zeros((120,160,3),np.uint8)

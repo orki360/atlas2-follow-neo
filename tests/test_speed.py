@@ -4,8 +4,8 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import time
 import unittest
 from unittest.mock import Mock
-from follow_neo.manual import ManualControl, shape_dance_axis
-from follow_neo.gui import FollowLabWindow
+from follow_neo.transport.manual import ManualControl, shape_dance_axis
+from follow_neo.ui.window import FollowLabWindow
 from test_manual import Server, wait_for
 from test_dance import decision
 

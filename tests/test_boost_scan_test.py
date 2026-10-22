@@ -6,11 +6,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock
 
-from follow_neo.search_test import SearchTest
-from follow_neo.types import Settings
-from follow_neo.manual import ManualControl
-from follow_neo.session import FollowSession
-from follow_neo.state_diagram import diagram_snapshot, PAUSED, CURRENT
+from follow_neo.control.search_test import SearchTest
+from follow_neo.shared.types import Settings
+from follow_neo.transport.manual import ManualControl
+from follow_neo.runtime.session import FollowSession
+from follow_neo.ui.state_diagram import diagram_snapshot, PAUSED, CURRENT
 from VERSION import REVISION
 from test_manual import Server, wait_for
 from test_search_debug import heading

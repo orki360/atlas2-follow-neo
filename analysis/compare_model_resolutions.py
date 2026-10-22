@@ -13,8 +13,8 @@ sys.path.insert(0, str(ROOT))
 import av
 import cv2
 import numpy as np
-from follow_neo.detector import DetectorSettings, OnnxDroneDetector
-from follow_neo.models import DEFAULT_MODEL, HIGH_RES_MODEL, MODEL_NAMES, resolve_model
+from follow_neo.perception.detector import DetectorSettings, OnnxDroneDetector
+from follow_neo.perception.models import DEFAULT_MODEL, HIGH_RES_MODEL, MODEL_NAMES, resolve_model
 
 
 def load_frames(path, times):

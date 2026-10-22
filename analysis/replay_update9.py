@@ -7,9 +7,9 @@ this counterfactual replay. Aircraft response to new commands is not simulated.
 import argparse,collections,json,sys
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from follow_neo.controller import FollowController
-from follow_neo.dance import dance_command
-from follow_neo.types import Box,Detection,settings_from_config
+from follow_neo.control.controller import FollowController
+from follow_neo.control.dance import dance_command
+from follow_neo.shared.types import Box,Detection,settings_from_config
 
 
 def replay(path):

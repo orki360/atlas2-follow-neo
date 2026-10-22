@@ -4,9 +4,9 @@ import socket
 import unittest
 from unittest.mock import Mock,patch
 import numpy as np
-from follow_neo.control_transport import ControlChannel,RC_ACK_TIMEOUT
-from follow_neo.manual import ManualControl
-from follow_neo.video import VideoReceiver
+from follow_neo.transport.control_transport import ControlChannel,RC_ACK_TIMEOUT
+from follow_neo.transport.manual import ManualControl
+from follow_neo.capture.video import VideoReceiver
 from analysis.verify_recovery_run import verify_rows
 from test_dual_class import allowed_decision
 
@@ -20,12 +20,12 @@ class TransportDiagnosticsTests(unittest.TestCase):
 
     def test_late_fifo_ack_reports_original_command_and_cannot_confirm_neutral(self):
         c=self.channel
-        with patch('follow_neo.control_transport.time.monotonic',return_value=10.):
+        with patch('follow_neo.transport.control_transport.time.monotonic',return_value=10.):
             c._send('rc .1 0 0 0')
-        with patch('follow_neo.control_transport.time.monotonic',return_value=10.30):
+        with patch('follow_neo.transport.control_transport.time.monotonic',return_value=10.30):
             c.pause('delayed ACK')
         c.buffer=b'success\r\n'
-        with patch('follow_neo.control_transport.time.monotonic',return_value=10.40):c._consume()
+        with patch('follow_neo.transport.control_transport.time.monotonic',return_value=10.40):c._consume()
         report=c.diagnostics(10.41)
         self.assertTrue(report['last_ack']['late']);self.assertAlmostEqual(report['last_ack']['ack_ms'],400.)
         self.assertEqual(report['last_ack']['command'],'rc .1 0 0 0')
@@ -33,7 +33,7 @@ class TransportDiagnosticsTests(unittest.TestCase):
         self.assertEqual(report['pending_count'],1);self.assertAlmostEqual(report['oldest_pending_age_ms'],110.)
         self.assertFalse(c.neutral_acknowledged);self.assertFalse(c.resume())
         c.buffer=b'success\r\n'
-        with patch('follow_neo.control_transport.time.monotonic',return_value=10.45):c._consume()
+        with patch('follow_neo.transport.control_transport.time.monotonic',return_value=10.45):c._consume()
         self.assertTrue(c.neutral_acknowledged);self.assertTrue(c.paused)
         self.assertEqual(c.diagnostics()['pending_count'],0)
         self.assertTrue(c.diagnostics()['last_ack']['neutral'])
@@ -43,7 +43,7 @@ class TransportDiagnosticsTests(unittest.TestCase):
         c=self.channel
         for i in range(125):
             c.outstanding=[(i,'rc 0 0 0 0',float(i),False)];c.buffer=b'success\r\n'
-            with patch('follow_neo.control_transport.time.monotonic',return_value=i+.05):c._consume()
+            with patch('follow_neo.transport.control_transport.time.monotonic',return_value=i+.05):c._consume()
         d=c.diagnostics(125.)
         self.assertEqual(d['ack_count'],125);self.assertEqual(d['rc_ack_sample_count'],120)
         self.assertEqual(d['late_rc_ack_count'],0);self.assertAlmostEqual(d['rc_ack_p95_ms'],50.)
@@ -53,7 +53,7 @@ class TransportDiagnosticsTests(unittest.TestCase):
     def test_manual_snapshot_reports_growing_pending_age_without_changing_authority(self):
         c=ManualControl('127.0.0.1')
         c.transport_status=dict(oldest_pending_sent_at=10.,pending_count=1)
-        with patch('follow_neo.manual.time.monotonic',return_value=10.5):d=c.control_snapshot()
+        with patch('follow_neo.transport.manual.time.monotonic',return_value=10.5):d=c.control_snapshot()
         self.assertEqual(d['transport']['oldest_pending_age_ms'],500.)
         self.assertFalse(d['active']);self.assertFalse(c.enabled)
         self.assertNotIn('oldest_pending_age_ms',c.transport_status)
@@ -65,7 +65,7 @@ class VideoTimingTests(unittest.TestCase):
         v=VideoReceiver('127.0.0.1',processing_fps=10.,on_event=lambda e,d:events.append((e,d)),on_frame=frames.append)
         image=Mock();image.to_ndarray.return_value=np.zeros((8,8,3),np.uint8)
         for t in (10.,10.03,10.07,10.10,10.70):
-            with patch('follow_neo.video.time.monotonic',return_value=t+.005):
+            with patch('follow_neo.capture.video.time.monotonic',return_value=t+.005):
                 v._publish_decoded(image,t);v._publish_pending(t+.005)
         self.assertEqual(v.count,5);self.assertGreater(v.sampled_out,0)
         self.assertEqual(len(frames),v.processed_count)

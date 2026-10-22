@@ -7,12 +7,12 @@ import time
 import unittest
 from dataclasses import asdict,replace
 from unittest.mock import patch
-from follow_neo.types import Settings,settings_from_config
-from follow_neo.search_sectors import SectorSweep,SearchObservationLog
-from follow_neo.search_motion import SearchYawProfile
-from follow_neo.recovery_search import RecoverySearch,scan_command
-from follow_neo.control_transport import ControlChannel,MotionReduction,VISUAL_CHANGE,reduced_command
-from follow_neo.motion_continuity import compatible_setpoint
+from follow_neo.shared.types import Settings,settings_from_config
+from follow_neo.control.search_sectors import SectorSweep,SearchObservationLog
+from follow_neo.control.search_motion import SearchYawProfile
+from follow_neo.control.recovery_search import RecoverySearch,scan_command
+from follow_neo.transport.control_transport import ControlChannel,MotionReduction,VISUAL_CHANGE,reduced_command
+from follow_neo.control.motion_continuity import compatible_setpoint
 import test_motion_continuity as continuity_cases
 from test_motion_continuity import heading
 
@@ -249,7 +249,7 @@ class ReductionTransportTests(unittest.TestCase):
             if second_reduction and now[0]>=10.08:return MotionReduction((.05,0,0,.1))
         def applied(values):current[0]=values;changes.append(values)
         peer=Peer()
-        with patch('follow_neo.control_transport.time.monotonic',side_effect=lambda:now[0]):
+        with patch('follow_neo.transport.control_transport.time.monotonic',side_effect=lambda:now[0]):
             channel=ControlChannel(peer,guard,lambda e,d:events.append((e,d)))
             ok=channel.command('rc .2 0 0 .1',motion_keys=frozenset(),on_reduction=applied)
         return channel,peer,ok,events,changes
@@ -303,8 +303,8 @@ class ReductionTransportTests(unittest.TestCase):
 
 class ManualReductionIntegrationTests(unittest.TestCase):
     def test_reduction_reaches_wire_and_logs_without_restarting_forward(self):
-        from follow_neo.manual import ManualControl
-        from follow_neo.nano_guard import apply_visual
+        from follow_neo.transport.manual import ManualControl
+        from follow_neo.control.nano_guard import apply_visual
         from test_nano_bridge import decision,visual
         from test_visual_continuity import GOOD
         from test_manual import Server,wait_for

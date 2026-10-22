@@ -8,10 +8,10 @@ import time
 import unittest
 import numpy as np
 
-from follow_neo.video import Frame,VideoReceiver
-from follow_neo.session import FollowSession
-from follow_neo.detector import DetectorSettings
-from follow_neo.manual import ManualControl
+from follow_neo.capture.video import Frame,VideoReceiver
+from follow_neo.runtime.session import FollowSession
+from follow_neo.perception.detector import DetectorSettings
+from follow_neo.transport.manual import ManualControl
 from test_manual import Server,wait_for
 from test_control_scan_fix import AsyncServer
 from test_dance import decision
@@ -49,7 +49,7 @@ class VideoReconnectTests(unittest.TestCase):
         r.on_frame=publish
         peers=[Mock(),Mock()]
         for p in peers:p.recv.side_effect=[payload,b'']
-        with publish_inline(r), patch('follow_neo.video.socket.create_connection',side_effect=peers), \
+        with publish_inline(r), patch('follow_neo.capture.video.socket.create_connection',side_effect=peers), \
              patch.object(r.stop_event,'wait',side_effect=lambda delay:r.stop_event.is_set()):r._run()
         self.assertEqual({f.stream_epoch for f in frames},{0,1})
         self.assertIsNone(r.error);self.assertEqual(r.reconnect_count,1)
@@ -67,8 +67,8 @@ class VideoReconnectTests(unittest.TestCase):
         peers[0].recv.side_effect=[b'first-stream',b'']
         peers[1].recv.return_value=b'new-keyframe'
         codecs=[Mock(parse=Mock(return_value=[object()]),decode=Mock(return_value=[decoded()])) for _ in peers]
-        with publish_inline(r), patch('follow_neo.video.socket.create_connection',side_effect=peers) as connect, \
-             patch('follow_neo.video.av.CodecContext',Mock(create=Mock(side_effect=codecs))), \
+        with publish_inline(r), patch('follow_neo.capture.video.socket.create_connection',side_effect=peers) as connect, \
+             patch('follow_neo.capture.video.av.CodecContext',Mock(create=Mock(side_effect=codecs))), \
              patch.object(r.stop_event,'wait',side_effect=lambda delay:r.stop_event.is_set()):
             r._run()
         self.assertEqual([f.frame_id for f in frames],[1,2])
@@ -87,7 +87,7 @@ class VideoReconnectTests(unittest.TestCase):
         def wait(delay):
             delays.append(delay);return r.stop_event.is_set()
         r.on_event=event
-        with patch('follow_neo.video.socket.create_connection',side_effect=ConnectionRefusedError('offline')) as connect, \
+        with patch('follow_neo.capture.video.socket.create_connection',side_effect=ConnectionRefusedError('offline')) as connect, \
              patch.object(r.stop_event,'wait',side_effect=wait):
             r._run()
         self.assertEqual(delays,[.5,1.,2.,4.,4.]);self.assertEqual(connect.call_count,5)
@@ -96,7 +96,7 @@ class VideoReconnectTests(unittest.TestCase):
     def test_stop_on_failure_never_opens_a_second_connection(self):
         r=VideoReceiver('offline.invalid')
         r.on_event=lambda e,d:r.stop_event.set() if e=='video_error' else None
-        with patch('follow_neo.video.socket.create_connection',side_effect=TimeoutError('offline')) as connect:
+        with patch('follow_neo.capture.video.socket.create_connection',side_effect=TimeoutError('offline')) as connect:
             r._run()
         self.assertEqual(connect.call_count,1);self.assertFalse(r.thread)
 
@@ -108,9 +108,9 @@ class VideoReconnectTests(unittest.TestCase):
             clock[0]+=.5
             raise socket.timeout()
         peer.recv.side_effect=recv
-        with patch('follow_neo.video.socket.create_connection',return_value=peer), \
-             patch('follow_neo.video.av.CodecContext'), \
-             patch('follow_neo.video.time.monotonic',side_effect=lambda:clock[0]):
+        with patch('follow_neo.capture.video.socket.create_connection',return_value=peer), \
+             patch('follow_neo.capture.video.av.CodecContext'), \
+             patch('follow_neo.capture.video.time.monotonic',side_effect=lambda:clock[0]):
             with self.assertRaisesRegex(TimeoutError,'No video bytes'):r._receive_stream(None)
         self.assertEqual(peer.recv.call_count,17)
 
@@ -118,9 +118,9 @@ class VideoReconnectTests(unittest.TestCase):
         r=VideoReceiver('offline.invalid');clock=[100.];peer=Mock()
         def recv(_):clock[0]+=1.;return b'undecodable'
         peer.recv.side_effect=recv
-        with patch('follow_neo.video.socket.create_connection',return_value=peer), \
-             patch('follow_neo.video.av.CodecContext',Mock(create=Mock(return_value=Mock(parse=Mock(return_value=[]))))), \
-             patch('follow_neo.video.time.monotonic',side_effect=lambda:clock[0]):
+        with patch('follow_neo.capture.video.socket.create_connection',return_value=peer), \
+             patch('follow_neo.capture.video.av.CodecContext',Mock(create=Mock(return_value=Mock(parse=Mock(return_value=[]))))), \
+             patch('follow_neo.capture.video.time.monotonic',side_effect=lambda:clock[0]):
             with self.assertRaisesRegex(TimeoutError,'no decoded frames'):r._receive_stream(None)
         self.assertEqual(peer.recv.call_count,9)
 
@@ -128,7 +128,7 @@ class VideoReconnectTests(unittest.TestCase):
 class SessionStreamTests(unittest.TestCase):
     def make_session(self):
         folder=tempfile.TemporaryDirectory();self.addCleanup(folder.cleanup)
-        with patch('follow_neo.session.resolve_model',return_value=(Path(folder.name)/'test.onnx',{})):
+        with patch('follow_neo.runtime.session.resolve_model',return_value=(Path(folder.name)/'test.onnx',{})):
             s=FollowSession(folder.name,'offline.invalid')
         self.addCleanup(s.stop)
         return s
@@ -142,7 +142,7 @@ class SessionStreamTests(unittest.TestCase):
 
     def test_gui_clears_old_image_while_reconnecting_and_recovers(self):
         import tkinter as tk
-        from follow_neo.gui import FollowLabWindow
+        from follow_neo.ui.window import FollowLabWindow
         s=self.make_session();root=tk.Tk();root.withdraw()
         self.addCleanup(root.destroy)
         window=FollowLabWindow(root,s.root);window.session=s
@@ -186,7 +186,7 @@ class SessionStreamTests(unittest.TestCase):
         def detect(image):
             s.stop_event.set();return dict(detections=[],inference_ms=1.)
         s.receiver.frames.wait_next=next_frame;d.detect.side_effect=detect
-        with patch('follow_neo.session.OnnxDroneDetector',return_value=d):s._infer()
+        with patch('follow_neo.runtime.session.OnnxDroneDetector',return_value=d):s._infer()
         self.assertIsNone(s.model_error);self.assertEqual(d.detect.call_count,1)
         self.assertEqual(s.result.get()['frame'].frame_id,2);self.assertEqual(s.result.get()['generation'],1)
 
@@ -198,7 +198,7 @@ class SessionStreamTests(unittest.TestCase):
         d.detect.side_effect=detect
         self.addCleanup(release.set)
         s.receiver.frames.set(Frame(1,time.monotonic(),np.zeros((20,20,3),np.uint8)))
-        with patch('follow_neo.session.OnnxDroneDetector',return_value=d):
+        with patch('follow_neo.runtime.session.OnnxDroneDetector',return_value=d):
             s.inference_thread.start();self.assertTrue(entered.wait(2))
             s.receiver._invalidate_stream(ConnectionError('offline'),retry_seconds=.5)
             release.set();wait_for(lambda:s.inference_count==1)

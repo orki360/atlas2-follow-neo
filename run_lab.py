@@ -13,9 +13,9 @@ ROOT=Path(__file__).resolve().parent
 def check(mode='Auto', device_id=-1, model_name=None):
     import numpy as np
     import cv2, av, onnxruntime, PIL, tkinter
-    from follow_neo.detector import OnnxDroneDetector
+    from follow_neo.perception.detector import OnnxDroneDetector
     from follow_neo import __version__
-    from follow_neo.models import resolve_model
+    from follow_neo.perception.models import resolve_model
     model,manifest=resolve_model(ROOT,model_name);out=ROOT/'logs';out.mkdir(exist_ok=True)
     digest=hashlib.sha256(model.read_bytes()).hexdigest()
     if digest!=manifest['sha256']: raise RuntimeError('Model checksum mismatch. Reapply the update ZIP.')
@@ -44,13 +44,22 @@ def main():
     ap.add_argument('--check',action='store_true')
     ap.add_argument('--compute',choices=['Auto','GPU','CPU'],default='Auto')
     ap.add_argument('--device-id',type=int,default=-1)
-    from follow_neo.models import MODEL_NAMES
+    ap.add_argument('--runtime',choices=['process','inline'],default='process',
+                    help='process isolates the GUI; inline is the comparison/rollback mode')
+    from follow_neo.perception.models import MODEL_NAMES
     ap.add_argument('--model',choices=MODEL_NAMES)
     args=ap.parse_args()
     if args.check: check(args.compute,args.device_id,args.model);return
     import tkinter as tk
-    from follow_neo.gui import FollowLabWindow
-    root=tk.Tk();FollowLabWindow(root,ROOT,model_name=args.model);root.mainloop()
+    from follow_neo.ui.window import FollowLabWindow
+    runtime=None
+    if args.runtime=='process':
+        from follow_neo.runtime.client import RuntimeClient
+        runtime=RuntimeClient()
+    try:
+        root=tk.Tk();FollowLabWindow(root,ROOT,model_name=args.model,runtime=runtime);root.mainloop()
+    finally:
+        if runtime:runtime.close()
 
 
 if __name__=='__main__':

@@ -1,15 +1,15 @@
 """Regression for 20261015_174513: isolated state/evidence tests, no aircraft."""
 import copy
 import unittest
-from follow_neo.types import Settings,Box,Detection,Kinematics
-from follow_neo.recovery_search import RecoverySearch
-from follow_neo.nano_guard import RealNeoEvidence,sustained_real_neo,apply_visual,transport_visual_reason,current_visual_support
-from follow_neo.dance import dance_command,ZERO
-from follow_neo.controller import FollowController
+from follow_neo.shared.types import Settings,Box,Detection,Kinematics
+from follow_neo.control.recovery_search import RecoverySearch
+from follow_neo.control.nano_guard import RealNeoEvidence,sustained_real_neo,apply_visual,transport_visual_reason,current_visual_support
+from follow_neo.control.dance import dance_command,ZERO
+from follow_neo.control.controller import FollowController
 from test_nano_bridge import decision,visual
 from test_tracking_recovery7 import heading
 import test_tracking_recovery7 as recovery7
-from follow_neo.approach import LateralEvidence
+from follow_neo.control.approach import LateralEvidence
 
 
 class RecoveryBudgetTests(unittest.TestCase):

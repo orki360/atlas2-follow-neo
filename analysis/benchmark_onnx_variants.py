@@ -6,7 +6,7 @@ import time
 import numpy as np
 import onnx
 from onnxconverter_common import float16
-from follow_neo.compute import create_session
+from follow_neo.perception.compute import create_session
 
 
 def prune_masks(model):

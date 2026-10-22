@@ -8,12 +8,12 @@ from dataclasses import replace
 from unittest.mock import Mock
 import tkinter as tk
 
-from follow_neo.dance import DanceSmoother, dance_command, ZERO
-from follow_neo.gui import FollowLabWindow, safe_focus_widget
-from follow_neo.controller import FollowController
-from follow_neo.spacing import VisualSpacingController
-from follow_neo.types import Box, Detection, Intent, Settings
-from follow_neo.manual import ManualControl, shape_dance_axis
+from follow_neo.control.dance import DanceSmoother, dance_command, ZERO
+from follow_neo.ui.window import FollowLabWindow, safe_focus_widget
+from follow_neo.control.controller import FollowController
+from follow_neo.control.spacing import VisualSpacingController
+from follow_neo.shared.types import Box, Detection, Intent, Settings
+from follow_neo.transport.manual import ManualControl, shape_dance_axis
 from test_dance import decision
 from test_manual import Server, wait_for
 

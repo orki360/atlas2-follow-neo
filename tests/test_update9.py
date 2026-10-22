@@ -8,15 +8,15 @@ from pathlib import Path
 from unittest.mock import Mock
 import numpy as np
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from follow_neo.types import Box,Detection,Settings,Intent,Kinematics,settings_from_config
-from follow_neo.controller import FollowController
-from follow_neo.tracker import BBoxTracker
-from follow_neo.spacing import VisualSpacingController
-from follow_neo.edge_search import EdgeYawSearch,yaw_override
-from follow_neo.dance import dance_command,ZERO,DanceSmoother
-from follow_neo.manual import ManualControl,DEFAULT_AXIS_LIMITS,movement
-from follow_neo.telemetry import HeadingReceiver,parse_heading,fresh_heading
-from follow_neo.gui import FollowLabWindow,normalized_event_key,safe_focus_widget
+from follow_neo.shared.types import Box,Detection,Settings,Intent,Kinematics,settings_from_config
+from follow_neo.control.controller import FollowController
+from follow_neo.perception.tracker import BBoxTracker
+from follow_neo.control.spacing import VisualSpacingController
+from follow_neo.control.edge_search import EdgeYawSearch,yaw_override
+from follow_neo.control.dance import dance_command,ZERO,DanceSmoother
+from follow_neo.transport.manual import ManualControl,DEFAULT_AXIS_LIMITS,movement
+from follow_neo.transport.telemetry import HeadingReceiver,parse_heading,fresh_heading
+from follow_neo.ui.window import FollowLabWindow,normalized_event_key,safe_focus_widget
 
 
 def heading(t,yaw=0):return dict(time=t,yaw_deg=yaw,source='AircraftAttitude')

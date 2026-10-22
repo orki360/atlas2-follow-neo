@@ -5,12 +5,12 @@ import time
 from unittest.mock import Mock
 import numpy as np
 
-from follow_neo.nano_guard import (apply_visual, ForwardAnchorHistory,
+from follow_neo.control.nano_guard import (apply_visual, ForwardAnchorHistory,
     appearance_unsupported, transport_visual_reason)
-from follow_neo.nano_tracker import AppearanceCheck, NanoWorker
-from follow_neo.controller import FollowController
-from follow_neo.dance import dance_command, ZERO
-from follow_neo.video import Frame
+from follow_neo.perception.nano_tracker import AppearanceCheck, NanoWorker
+from follow_neo.control.controller import FollowController
+from follow_neo.control.dance import dance_command, ZERO
+from follow_neo.capture.video import Frame
 from test_nano_bridge import decision, visual
 from test_visual_continuity import GOOD
 
@@ -205,7 +205,7 @@ class BackgroundEvidenceTests(unittest.TestCase):
 
 class HandoffTransportTests(unittest.TestCase):
     def test_cached_accepted_decision_hands_off_at_real_send_time(self):
-        from follow_neo.manual import ManualControl
+        from follow_neo.transport.manual import ManualControl
         from test_manual import Server, wait_for
         peer=Server();events=[]
         def provider():

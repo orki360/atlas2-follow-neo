@@ -8,12 +8,12 @@ from datetime import datetime
 from pathlib import Path
 import numpy as np
 import cv2
-from follow_neo.detector import OnnxDroneDetector
-from follow_neo.models import resolve_model,DEFAULT_MODEL
-from follow_neo.recording import VideoRecorder
-from follow_neo.video import Frame,LatestValue
-from follow_neo.controller import FollowController
-from follow_neo.types import Settings,Box,Detection
+from follow_neo.perception.detector import OnnxDroneDetector
+from follow_neo.perception.models import resolve_model,DEFAULT_MODEL
+from follow_neo.diagnostics.recording import VideoRecorder
+from follow_neo.capture.video import Frame,LatestValue
+from follow_neo.control.controller import FollowController
+from follow_neo.shared.types import Settings,Box,Detection
 
 
 def benchmark(seconds=130,compute='Auto',profile='Auto',model=DEFAULT_MODEL,video=None,output=None):

@@ -8,8 +8,8 @@ from pathlib import Path
 import numpy as np
 import cv2
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from follow_neo.tracker import BBoxTracker
-from follow_neo.types import Detection,Box
+from follow_neo.perception.tracker import BBoxTracker
+from follow_neo.shared.types import Detection,Box
 
 
 class AccelerationCandidate:

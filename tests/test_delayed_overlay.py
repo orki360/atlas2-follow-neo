@@ -7,11 +7,11 @@ from unittest.mock import patch
 
 import av
 import numpy as np
-from follow_neo.dance import dance_command, ZERO
-from follow_neo.models import DEFAULT_MODEL, DUAL_SOURCE_NAMES, target_policy
-from follow_neo.overlay import render_bundle, BLUE, NANO_COLOR
-from follow_neo.recording import VideoRecorder
-from follow_neo.video import Frame
+from follow_neo.control.dance import dance_command, ZERO
+from follow_neo.perception.models import DEFAULT_MODEL, DUAL_SOURCE_NAMES, target_policy
+from follow_neo.presentation.overlay import render_bundle, BLUE, NANO_COLOR
+from follow_neo.diagnostics.recording import VideoRecorder
+from follow_neo.capture.video import Frame
 
 
 def detections():
@@ -39,7 +39,7 @@ class DelayedOverlayTests(unittest.TestCase):
         historic=dict(mode='shadow',box=[80,180,170,240],visual_time=9.99,
                       historical=True,visual_active=True,blocked=True)
         a=dict(result=dict(frame=frame,detections=detections(),inference_ms=90.),decision=d,nano=historic)
-        with patch('follow_neo.overlay.draw_box') as draw:
+        with patch('follow_neo.presentation.overlay.draw_box') as draw:
             _,_,meta=render_bundle(frame,a,d,'Analyzed frame',now=12.)
         colors=[call.args[2] for call in draw.call_args_list]
         self.assertIn(BLUE,colors);self.assertIn(NANO_COLOR,colors)
@@ -53,7 +53,7 @@ class DelayedOverlayTests(unittest.TestCase):
         d['nano']=dict(mode='guarded',box=[80,180,170,240],visual_time=10.38,visual_active=True,
                        blocked=True,reason='semantic_expired')
         before=copy.deepcopy(d)
-        with patch('follow_neo.overlay.draw_box') as draw:
+        with patch('follow_neo.presentation.overlay.draw_box') as draw:
             _,_,meta=render_bundle(frame,None,d,'Live prediction',now=10.4)
         self.assertEqual(meta['nano_box'],d['nano']['box'])
         self.assertIn('UNVERIFIED',draw.call_args_list[-1].args[3])
@@ -67,7 +67,7 @@ class DelayedOverlayTests(unittest.TestCase):
             selected_box=None,selected_class_id=None,decision=d)
         before=copy.deepcopy(d)
         for age in (.34,.65,2.):
-            with patch('follow_neo.overlay.draw_box') as draw, patch('follow_neo.overlay.cv2.polylines') as contours:
+            with patch('follow_neo.presentation.overlay.draw_box') as draw, patch('follow_neo.presentation.overlay.cv2.polylines') as contours:
                 image,chosen,meta=render_bundle(Frame(99,10+age,source.image),analysis,
                     dict(measurement_id=99),'Analyzed frame',now=10+age)
             self.assertIs(chosen,source)
@@ -86,7 +86,7 @@ class DelayedOverlayTests(unittest.TestCase):
         d=decision();before=copy.deepcopy(d)
         for age in (.344,.531,.672):
             frame=Frame(2,10+age,np.zeros((480,640,3),np.uint8))
-            with patch('follow_neo.overlay.draw_box') as draw:
+            with patch('follow_neo.presentation.overlay.draw_box') as draw:
                 _,_,meta=render_bundle(frame,None,d,'Live prediction',now=10+age)
             self.assertEqual(len(draw.call_args_list),2)
             for name,call in zip(('neo','MINI PRO4'),draw.call_args_list):
@@ -102,7 +102,7 @@ class DelayedOverlayTests(unittest.TestCase):
             (10.2,10.751,[640,480],'expired'),(9.9,10.4,[640,480],'future_result'),
             (10.4,9.9,[640,480],'future_result'),(10.4,10.4,[1920,1080],'resolution_mismatch')]:
             d=decision();d.update(frame_size=size,confirmed=False)
-            with patch('follow_neo.overlay.draw_box') as draw:
+            with patch('follow_neo.presentation.overlay.draw_box') as draw:
                 _,_,meta=render_bundle(Frame(2,captured,np.zeros((480,640,3),np.uint8)),
                                       None,d,'Live prediction',now=now)
             draw.assert_not_called()

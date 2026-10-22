@@ -4,13 +4,13 @@ import threading
 import time
 from types import SimpleNamespace
 import numpy as np
-from follow_neo.types import Settings, Box, Detection
-from follow_neo.nano_guard import apply_visual, continuity_detection, transport_visual_reason
-from follow_neo.nano_tracker import NanoWorker
-from follow_neo.video import Frame
-from follow_neo.dance import dance_command, ZERO
-from follow_neo.recovery_search import RecoverySearch, scan_command
-from follow_neo.botsort_motion import BoTSORTTracker
+from follow_neo.shared.types import Settings, Box, Detection
+from follow_neo.control.nano_guard import apply_visual, continuity_detection, transport_visual_reason
+from follow_neo.perception.nano_tracker import NanoWorker
+from follow_neo.capture.video import Frame
+from follow_neo.control.dance import dance_command, ZERO
+from follow_neo.control.recovery_search import RecoverySearch, scan_command
+from follow_neo.perception.botsort_motion import BoTSORTTracker
 from test_nano_bridge import decision, visual
 
 
@@ -127,7 +127,7 @@ class ContinuityTests(unittest.TestCase):
 
 class BridgeTransportTests(unittest.TestCase):
     def test_bounded_forward_reaches_mock_wire_and_veto_neutralizes_it(self):
-        from follow_neo.manual import ManualControl
+        from follow_neo.transport.manual import ManualControl
         from test_manual import Server, wait_for
         peer=Server();veto=threading.Event();events=[]
         def provider():

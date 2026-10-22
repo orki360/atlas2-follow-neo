@@ -10,8 +10,8 @@ sys.path.insert(0, str(ROOT))
 
 import cv2
 import numpy as np
-from follow_neo.detector import OnnxDroneDetector, DetectorSettings
-from follow_neo.models import DEFAULT_MODEL, resolve_model
+from follow_neo.perception.detector import OnnxDroneDetector, DetectorSettings
+from follow_neo.perception.models import DEFAULT_MODEL, resolve_model
 
 
 def stats(values):

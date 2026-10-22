@@ -11,12 +11,12 @@ from unittest.mock import Mock, patch
 import av
 import cv2
 import numpy as np
-from follow_neo.recording import VideoRecorder
-from follow_neo.session import FollowSession
-from follow_neo.video import Frame, LatestValue
-from follow_neo.video import VideoReceiver
-from follow_neo.overlay import render_bundle
-from follow_neo.models import V6_MODEL,DUAL_MODEL_SOURCE_NAMES,target_policy
+from follow_neo.diagnostics.recording import VideoRecorder
+from follow_neo.runtime.session import FollowSession
+from follow_neo.capture.video import Frame, LatestValue
+from follow_neo.capture.video import VideoReceiver
+from follow_neo.presentation.overlay import render_bundle
+from follow_neo.perception.models import V6_MODEL,DUAL_MODEL_SOURCE_NAMES,target_policy
 
 
 def decision():
@@ -37,7 +37,7 @@ class RecordingBudgetTests(unittest.TestCase):
         frames=[]
         receiver=VideoReceiver('offline.invalid',processing_fps=60,on_frame=frames.append)
         decoded=Mock(key_frame=False,to_ndarray=Mock(return_value=np.zeros((8,8,3),np.uint8)))
-        with patch('follow_neo.video.time.monotonic') as clock:
+        with patch('follow_neo.capture.video.time.monotonic') as clock:
             for i in range(120):
                 stamp=10+i/60
                 clock.return_value=stamp
@@ -51,7 +51,7 @@ class RecordingBudgetTests(unittest.TestCase):
     def test_auto_samples_before_snapshot_preserving_paired_source_pts(self):
         source=np.zeros((1080,1920,3),np.uint8)
         d=decision();before=copy.deepcopy(d);supplier=Mock(return_value=d)
-        with tempfile.TemporaryDirectory() as folder, patch('follow_neo.recording.probe_nvenc',return_value=(False,'test')):
+        with tempfile.TemporaryDirectory() as folder, patch('follow_neo.diagnostics.recording.probe_nvenc',return_value=(False,'test')):
             recorder=VideoRecorder(folder,'Both videos',profile='Auto')
             admitted=[]
             for i in range(8):
@@ -99,7 +99,7 @@ class RecordingBudgetTests(unittest.TestCase):
                 entered.set()
                 if not release.wait(3):raise RuntimeError('test worker timeout')
             return encode(output,source,pts)
-        with tempfile.TemporaryDirectory() as folder, patch('follow_neo.recording.probe_nvenc',return_value=(False,'test')), \
+        with tempfile.TemporaryDirectory() as folder, patch('follow_neo.diagnostics.recording.probe_nvenc',return_value=(False,'test')), \
                 patch.object(VideoRecorder,'_encode',staticmethod(delayed)):
             r=VideoRecorder(folder,'Clean video',profile='Auto')
             pixels=np.zeros((120,160,3),np.uint8)

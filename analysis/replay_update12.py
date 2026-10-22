@@ -9,11 +9,11 @@ import numpy as np
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
-from follow_neo.controller import FollowController
-from follow_neo.detector import OnnxDroneDetector,DetectorSettings
-from follow_neo.botsort_tracker import low_threshold
-from follow_neo.models import resolve_model
-from follow_neo.types import Box,Detection,Settings
+from follow_neo.control.controller import FollowController
+from follow_neo.perception.detector import OnnxDroneDetector,DetectorSettings
+from follow_neo.perception.botsort_tracker import low_threshold
+from follow_neo.perception.models import resolve_model
+from follow_neo.shared.types import Box,Detection,Settings
 
 
 def replay(folder,fps,limit):

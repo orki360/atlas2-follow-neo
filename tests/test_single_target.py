@@ -1,11 +1,11 @@
 """Initial acquisition must never remain locked to a discarded tentative ID."""
 import unittest
 import numpy as np
-from follow_neo.botsort_tracker import BoTSORTTracker
-from follow_neo.controller import FollowController
-from follow_neo.control_status import target_status_text
-from follow_neo.dance import dance_command
-from follow_neo.types import Box,Detection,Settings
+from follow_neo.perception.botsort_tracker import BoTSORTTracker
+from follow_neo.control.controller import FollowController
+from follow_neo.control.control_status import target_status_text
+from follow_neo.control.dance import dance_command
+from follow_neo.shared.types import Box,Detection,Settings
 
 
 def detection(confidence=.9,x=200):return Detection(Box(x,180,x+60,220),confidence)

@@ -12,8 +12,8 @@ import sys
 import threading
 import time
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from follow_neo.cadence import FrameRateGate,LatestFrameSampler
-from follow_neo.video import VideoReceiver
+from follow_neo.capture.cadence import FrameRateGate,LatestFrameSampler
+from follow_neo.capture.video import VideoReceiver
 
 
 def arrivals(kind,duration):

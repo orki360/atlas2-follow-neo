@@ -4,15 +4,15 @@ import unittest
 from dataclasses import asdict, replace
 from unittest.mock import Mock
 import numpy as np
-from follow_neo.types import Settings, Box, Detection, Kinematics, settings_from_config
-from follow_neo.recovery_search import RecoverySearch, scan_command
-from follow_neo.search_sectors import SectorSweep
-from follow_neo.centering import DampedTrackingController
-from follow_neo.overlay import draw_forward_window
-from follow_neo.nano_guard import apply_visual, transport_visual_reason
-from follow_neo.pursuit import recovery_vector
-from follow_neo.dance import dance_command
-from follow_neo.nano_tracker import NanoWorker
+from follow_neo.shared.types import Settings, Box, Detection, Kinematics, settings_from_config
+from follow_neo.control.recovery_search import RecoverySearch, scan_command
+from follow_neo.control.search_sectors import SectorSweep
+from follow_neo.control.centering import DampedTrackingController
+from follow_neo.presentation.overlay import draw_forward_window
+from follow_neo.control.nano_guard import apply_visual, transport_visual_reason
+from follow_neo.control.pursuit import recovery_vector
+from follow_neo.control.dance import dance_command
+from follow_neo.perception.nano_tracker import NanoWorker
 from test_tracking_recovery9 import vector_case, heading
 
 
@@ -137,7 +137,7 @@ def search_case(now=10.58):
 
 class CombinedSearchTests(unittest.TestCase):
     def test_real_controller_loss_reaches_combined_search_and_expires(self):
-        from follow_neo.controller import FollowController
+        from follow_neo.control.controller import FollowController
         c=FollowController('botsort',0,'neo');s=Settings(search_yaw_degrees=360)
         for i in range(14):
             source=10+i*.1;now=source+.12

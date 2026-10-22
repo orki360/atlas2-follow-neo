@@ -3,10 +3,10 @@ import json
 import unittest
 import cv2
 import numpy as np
-from follow_neo.botsort_tracker import BoTSORTTracker, low_threshold
-from follow_neo.camera_motion import CameraMotion
-from follow_neo.controller import FollowController
-from follow_neo.types import Box, Detection, Settings
+from follow_neo.perception.botsort_tracker import BoTSORTTracker, low_threshold
+from follow_neo.perception.camera_motion import CameraMotion
+from follow_neo.control.controller import FollowController
+from follow_neo.shared.types import Box, Detection, Settings
 
 
 def detection(x=200, score=.9, width=60):

@@ -2,14 +2,14 @@ import unittest
 from unittest.mock import patch,Mock
 from dataclasses import replace
 import numpy as np
-from follow_neo.botsort_tracker import BoTSORTTracker
-from follow_neo.controller import FollowController
-from follow_neo.types import Box,Detection,Settings,Kinematics
-from follow_neo.recovery_search import RecoverySearch
-from follow_neo.dance import dance_command
-from follow_neo.gui import FollowLabWindow
-from follow_neo.overlay import render_bundle
-from follow_neo.video import Frame
+from follow_neo.perception.botsort_tracker import BoTSORTTracker
+from follow_neo.control.controller import FollowController
+from follow_neo.shared.types import Box,Detection,Settings,Kinematics
+from follow_neo.control.recovery_search import RecoverySearch
+from follow_neo.control.dance import dance_command
+from follow_neo.ui.window import FollowLabWindow
+from follow_neo.presentation.overlay import render_bundle
+from follow_neo.capture.video import Frame
 
 def detection(x=200,confidence=.95):return Detection(Box(x,180,x+60,220),confidence)
 def heading(t):return dict(yaw_deg=0.,time=t,source='test')
@@ -22,7 +22,7 @@ class ContinuityTests(unittest.TestCase):
         return self.t.update([detection()] if ds is None else ds,stamp,stamp+.01,self.i,.8,.8,image=None)
     def acquire(self):self.feed();self.feed()
     def test_only_botsort_kalman_exists(self):
-        with patch('follow_neo.tracker.BBoxTracker.__init__',side_effect=AssertionError('second filter')):
+        with patch('follow_neo.perception.tracker.BBoxTracker.__init__',side_effect=AssertionError('second filter')):
             self.acquire();self.assertFalse(hasattr(self.t,'kf'))
             self.assertIs(self.t.target.kalman_filter,self.t.engine.kalman_filter)
     def test_velocity_units_and_repeated_snapshots_do_not_advance_state(self):
@@ -139,7 +139,7 @@ class OverlayTests(unittest.TestCase):
         c.observe([detection(255)],10.12,10.13,3,(640,480),s)
         decision=c.tick(10.13,640,480,10.12,s,heading(10.12))
         frame=SimpleNamespace(image=np.zeros((480,640,3),np.uint8),frame_id=3,decoded_at=10.12)
-        with patch('follow_neo.overlay.draw_box') as draw:
+        with patch('follow_neo.presentation.overlay.draw_box') as draw:
             _,_,meta=render_bundle(frame,None,decision,'Live prediction',now=10.13)
         labels=[call.args[3] for call in draw.call_args_list]
         self.assertTrue(any('CANDIDATE' in label for label in labels))

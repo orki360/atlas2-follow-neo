@@ -5,15 +5,15 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from dataclasses import replace
 from unittest.mock import Mock,patch
 import numpy as np
-from follow_neo.controller import FollowController
-from follow_neo.tracker import BBoxTracker
-from follow_neo.types import Settings,Detection,Box,Intent
-from follow_neo.dance import dance_command,ZERO
-from follow_neo.prediction import continuation_threshold
-from follow_neo.overlay import render_bundle,box_at_frame
-from follow_neo.video import Frame
-from follow_neo.manual import ManualControl
-from follow_neo.control_status import control_indicator
+from follow_neo.control.controller import FollowController
+from follow_neo.perception.tracker import BBoxTracker
+from follow_neo.shared.types import Settings,Detection,Box,Intent
+from follow_neo.control.dance import dance_command,ZERO
+from follow_neo.perception.prediction import continuation_threshold
+from follow_neo.presentation.overlay import render_bundle,box_at_frame
+from follow_neo.capture.video import Frame
+from follow_neo.transport.manual import ManualControl
+from follow_neo.control.control_status import control_indicator
 from test_manual import Server,wait_for
 
 
@@ -140,7 +140,7 @@ class CoastTests(unittest.TestCase):
     def test_prediction_overlay_label_and_time_limit(self):
         c,s=self.ready();d=self.missing(c,s,10.6)
         frame=Frame(1,10.62,np.zeros((720,1280,3),np.uint8))
-        with patch('follow_neo.overlay.draw_box') as draw:
+        with patch('follow_neo.presentation.overlay.draw_box') as draw:
             _,_,meta=render_bundle(frame,None,d,'Live prediction',now=10.62)
         self.assertIsNotNone(meta['display_box']);self.assertEqual(meta['track_support'],'prediction')
         self.assertIn('NO YOLO',draw.call_args.args[3]);self.assertTrue(draw.call_args.kwargs['dashed'])

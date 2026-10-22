@@ -5,15 +5,15 @@ import time
 import unittest
 from unittest.mock import Mock,patch
 from dataclasses import replace
-from follow_neo.manual import ManualControl
-from follow_neo.control_transport import ControlChannel
-from follow_neo.gui import FollowLabWindow
-from follow_neo.recovery_search import RecoverySearch,scan_command
-from follow_neo.edge_search import yaw_override
-from follow_neo.types import Box,Kinematics,Settings
-from follow_neo.types import Detection
-from follow_neo.controller import FollowController
-from follow_neo.dance import dance_command
+from follow_neo.transport.manual import ManualControl
+from follow_neo.transport.control_transport import ControlChannel
+from follow_neo.ui.window import FollowLabWindow
+from follow_neo.control.recovery_search import RecoverySearch,scan_command
+from follow_neo.control.edge_search import yaw_override
+from follow_neo.shared.types import Box,Kinematics,Settings
+from follow_neo.shared.types import Detection
+from follow_neo.control.controller import FollowController
+from follow_neo.control.dance import dance_command
 from test_manual import wait_for
 
 
@@ -99,7 +99,7 @@ class KeyboardRecoveryTests(unittest.TestCase):
         self.w.manual.update.assert_called_with(set());self.w.manual.enable.assert_called_once()
     def test_windows_release_is_immediate_even_if_idle_callbacks_never_run(self):
         event=Mock(keysym='Down',keycode=40)
-        with patch('follow_neo.gui.sys.platform','win32'):self.w.key_release(event)
+        with patch('follow_neo.ui.window.sys.platform','win32'):self.w.key_release(event)
         self.assertFalse(self.w.pressed)
         self.w.manual.update.assert_called_with(set());self.w.root.after_idle.assert_not_called()
     def test_missing_release_event_reconciles_with_physical_keyboard(self):
@@ -116,7 +116,7 @@ class KeyboardRecoveryTests(unittest.TestCase):
         self.w.manual.thread.is_alive.return_value=False
         self.w.ip=Mock(get=Mock(return_value='127.0.0.1'));self.w.dance_selected=False
         self.w.current_axis_limits=Mock(return_value={'yaw':.1,'vertical':.1,'roll':.1,'forward':.1})
-        with patch('follow_neo.gui.ManualControl') as create:
+        with patch('follow_neo.ui.window.ManualControl') as create:
             self.w.toggle_manual()
             self.assertFalse(self.w.pressed);self.assertFalse(self.w.key_releases)
             create.return_value.enable.assert_not_called()

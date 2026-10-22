@@ -3,9 +3,9 @@ import socket
 import threading
 import time
 import unittest
-from follow_neo.control_transport import ControlChannel
-from follow_neo.manual import ManualControl
-from follow_neo.control_status import control_indicator
+from follow_neo.transport.control_transport import ControlChannel
+from follow_neo.transport.manual import ManualControl
+from follow_neo.control.control_status import control_indicator
 from test_control_scan_fix import AsyncServer
 from test_manual import wait_for
 

@@ -5,15 +5,15 @@ import threading
 import time
 import unittest
 from unittest.mock import Mock,patch
-from follow_neo.types import Settings,Box,Detection,Kinematics
-from follow_neo.recovery_search import RecoverySearch,scan_command
-from follow_neo.nano_guard import apply_visual,transport_visual_reason
-from follow_neo.dance import dance_command,ZERO
-from follow_neo.manual import ManualControl
-from follow_neo.session import FollowSession
-from follow_neo.controller import FollowController
-from follow_neo.video import VideoReceiver
-from follow_neo.video_diagnostics import VideoDiagnostics
+from follow_neo.shared.types import Settings,Box,Detection,Kinematics
+from follow_neo.control.recovery_search import RecoverySearch,scan_command
+from follow_neo.control.nano_guard import apply_visual,transport_visual_reason
+from follow_neo.control.dance import dance_command,ZERO
+from follow_neo.transport.manual import ManualControl
+from follow_neo.runtime.session import FollowSession
+from follow_neo.control.controller import FollowController
+from follow_neo.capture.video import VideoReceiver
+from follow_neo.capture.video_diagnostics import VideoDiagnostics
 from test_nano_bridge import decision,visual
 from test_manual import Server,wait_for
 
@@ -186,7 +186,7 @@ class PauseContinuityTests(unittest.TestCase):
         c.pause_control('Control acknowledgement delayed beyond 0.25s',automatic_recovery=True)
         self.assertTrue(events[0][1]['preserve_tracking']);self.assertFalse(c.control_snapshot()['active'])
         self.assertTrue(c.control_snapshot()['continuity_pause'])
-        with patch('follow_neo.manual.time.monotonic',return_value=c.pause_started+1.01):
+        with patch('follow_neo.transport.manual.time.monotonic',return_value=c.pause_started+1.01):
             self.assertFalse(c.control_snapshot()['continuity_pause'])
         c.pause_control('window lost focus')
         self.assertFalse(c.control_snapshot()['continuity_pause'])
