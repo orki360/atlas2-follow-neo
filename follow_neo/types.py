@@ -74,7 +74,7 @@ class Settings:
     botsort_low_match_threshold: float = .50
     botsort_unconfirmed_match_threshold: float = .70
     inference_fps: float = 30.0
-    video_fps: float = 30.0
+    video_fps: float = 60.0
     edge_search_enabled: bool = True
     edge_search_seconds: float = 4.0
     search_yaw_degrees: float = 90.0

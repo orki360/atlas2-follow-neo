@@ -233,7 +233,9 @@ class SessionSchedulingTests(unittest.TestCase):
         """Real worker threads with a controlled detector; never open a socket."""
         temp=tempfile.TemporaryDirectory();self.addCleanup(temp.cleanup)
         with patch('follow_neo.session.resolve_model',return_value=(Path(temp.name)/'model.onnx',{'name':'test model'})):
-            session=FollowSession(temp.name,'127.0.0.1')
+            # Isolate latest-frame scheduling from intentional FPS throttling.
+            session=FollowSession(temp.name,'127.0.0.1',
+                                  settings=Settings(video_fps=30.,inference_fps=30.))
         entered=threading.Event();release=threading.Event();seen=[];published=[]
         detector=Mock();detector.input.shape=[1,3,640,640];detector.output.shape=[1,5,8400]
         detector.settings=DetectorSettings()

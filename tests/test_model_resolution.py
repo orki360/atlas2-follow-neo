@@ -148,8 +148,13 @@ class ModelResolutionTests(unittest.TestCase):
                     s.stop_event.set()
                 return dict(detections=[], inference_ms=1., input_size=[1920,1088], input_transform=transform)
             d.detect = detect
+            frame_ids=iter(range(1,21))
             def next_frame(*args):
-                fid = len(seen)+1
+                # The capture source advances independently of inference. With
+                # a 60 FPS publication target, the 30 FPS inference gate may
+                # skip a frame; tying its ID to detect() would repeat forever.
+                time.sleep(1/30+.001)
+                fid = next(frame_ids)
                 return Frame(fid,time.monotonic(),np.zeros((1080,1920,3),np.uint8)), fid
             s.receiver.frames.wait_next = Mock(side_effect=next_frame)
             try:

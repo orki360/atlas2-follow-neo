@@ -17,7 +17,7 @@ with tempfile.TemporaryDirectory() as folder:
     try:
         window=FollowLabWindow(root,Path(folder))
         root.update_idletasks()
-        assert VERSION=='14.0.0'
+        assert VERSION=='14.0.2'
         assert root.title()==f'ATLAS2 Follow NEO | Version {VERSION} / {REVISION} - BoT-SORT'
         assert window.version_label.cget('text')=='v'+VERSION
         assert window.revision_label.cget('text')==REVISION
@@ -47,6 +47,19 @@ with tempfile.TemporaryDirectory() as folder:
             window.settings=window.read_settings();window.save_config()
             assert json.loads(window.config_path.read_text())['settings']['nano_mode']==mode
         window.nano_mode.set('shadow');window.settings=window.read_settings()
+        assert window.session is None and window.manual is None
+        config_before=window.config_path.read_bytes()
+        settings_before=window.settings
+        window.toggle_real_time();root.update_idletasks()
+        assert window.real_time and window.realtime_button.cget('text')=='Real-Time: ON'
+        assert str(window.capture_button.cget('state'))=='disabled'
+        assert str(window.raw_record_button.cget('state'))=='disabled'
+        assert not window.sidebar.winfo_manager() and not window.view_bar.winfo_manager()
+        window.refresh()
+        window.toggle_real_time();root.update_idletasks()
+        assert not window.real_time and window.realtime_button.cget('text')=='Real-Time: OFF'
+        assert window.sidebar.winfo_manager()=='grid' and window.view_bar.winfo_manager()=='pack'
+        assert window.settings is settings_before and window.config_path.read_bytes()==config_before
         assert window.session is None and window.manual is None
         assert window.tabs.tab(window.motion_tab,'text')=='Motion'
         assert len(window.motion_controls)==15

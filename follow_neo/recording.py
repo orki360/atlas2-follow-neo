@@ -1,7 +1,8 @@
 """Bounded asynchronous recording, paired timestamps and measured encoder load.
 
-Auto probes simultaneous NVENC encoders; if unavailable it explicitly selects
-720p software encoding. 1080p preserves native resolution (no silent downscale).
+Auto records at up to 720p/15 FPS, using NVENC when available. This limits
+recording work independently of the live capture/inference cadence. Explicit
+1080p preserves native resolution and 30 FPS (no silent downscale).
 Capture, inference and control never wait for this worker's encoding queue.
 """
 from concurrent.futures import ThreadPoolExecutor
@@ -14,6 +15,7 @@ import av
 import cv2
 import numpy as np
 from .overlay import render_bundle
+from .cadence import FrameRateGate
 
 TIME_BASE=Fraction(1,90000)
 _PROBES={}
@@ -50,7 +52,7 @@ def probe_nvenc(width,height,count=2):
 
 def recording_size(width,height,profile,hardware):
     if profile not in ('Auto','1080p','720p'):raise ValueError('Unknown recording profile')
-    if profile=='720p' or profile=='Auto' and not hardware:
+    if profile in ('720p','Auto'):
         scale=min(1.,1280/width,720/height)
         return (max(2,int(width*scale)//2*2),max(2,int(height*scale)//2*2))
     return width,height
@@ -65,15 +67,25 @@ class VideoRecorder:
         self.directory.mkdir(parents=True,exist_ok=False)
         self.queue=queue.Queue(maxsize=8);self.stop_event=threading.Event();self.lock=threading.Lock()
         self.state='STARTING';self.error=None;self.submitted=0;self.written=0;self.dropped=0
+        self.target_fps=15 if profile=='Auto' else 30
+        self.sampler=FrameRateGate();self.rate_skipped=0;self.backlog_skipped=0
         self.first_time=None;self.last_time=None;self.started=time.monotonic();self.size=None;self.source_size=None
         self.encoder=None;self.fallback_reason=None;self.encode_times=deque(maxlen=120);self.queue_times=deque(maxlen=120)
         self.thread=threading.Thread(target=self._run,name='video-recorder',daemon=True);self.thread.start()
 
-    def submit(self,frame,decision):
+    def submit(self,frame,decision=None,*,decision_supplier=None):
         with self.lock:
-            if self.stop_event.is_set() or self.error:return
-            try:self.queue.put_nowait((frame,decision,time.monotonic()));self.submitted+=1
-            except queue.Full:self.dropped+=1
+            if self.stop_event.is_set() or self.error:return False
+            if self.profile=='Auto' and not self.sampler.admit(frame.decoded_at,self.target_fps):
+                self.rate_skipped+=1;return False
+            if self.queue.full():self.dropped+=1;return False
+            # Admission happens before even reading the diagnostic snapshot.
+            # The session supplier only reads a published immutable decision;
+            # it must never recalculate tracking or consult control locks.
+            if decision_supplier is not None:decision=decision_supplier()
+            try:self.queue.put_nowait((frame,decision,time.perf_counter()));self.submitted+=1
+            except queue.Full:self.dropped+=1;return False
+            return True
 
     def status(self):
         with self.lock:
@@ -81,12 +93,18 @@ class VideoRecorder:
             return dict(mode=self.mode,state=self.state,error=self.error,written=self.written,dropped=self.dropped,
                 path=str(self.directory),elapsed_seconds=elapsed,profile=self.profile,encoder=self.encoder,
                 resolution=self.size,source_resolution=self.source_size,fallback_reason=self.fallback_reason,
+                target_fps=self.target_fps,rate_skipped=self.rate_skipped,backlog_skipped=self.backlog_skipped,
                 recorded_fps=(self.written-1)/elapsed if elapsed>0 and self.written else 0.,
                 encode_ms_mean=sum(self.encode_times)/len(self.encode_times) if self.encode_times else 0.,
                 queue_age_ms_max=max(self.queue_times,default=0.),queue_depth=self.queue.qsize())
 
-    def stop(self):
-        with self.lock:self.stop_event.set()
+    def stop(self,*,discard_pending=False):
+        with self.lock:
+            self.stop_event.set()
+            if discard_pending:
+                while True:
+                    try:self.queue.get_nowait();self.dropped+=1
+                    except queue.Empty:break
 
     def wait(self):self.stop();self.thread.join()
 
@@ -95,7 +113,7 @@ class VideoRecorder:
         try:
             for kind in kinds:
                 container=av.open(str(self.directory/f'{kind}.mp4'),'w')
-                stream=container.add_stream(self.encoder,rate=30);outputs[kind]=(container,stream)
+                stream=container.add_stream(self.encoder,rate=self.target_fps);outputs[kind]=(container,stream)
                 stream.width=width;stream.height=height
                 stream.pix_fmt='yuv420p' if width%2==0 and height%2==0 else 'yuv444p'
                 stream.time_base=TIME_BASE;stream.codec_context.time_base=TIME_BASE
@@ -124,11 +142,19 @@ class VideoRecorder:
             while not self.stop_event.is_set() or not self.queue.empty():
                 try:frame,decision,enqueued=self.queue.get(timeout=.1)
                 except queue.Empty:continue
+                # Discard stale queued work while capturing; do not spend
+                # flight CPU catching up a backlog. stop()/wait() drains the
+                # bounded final queue so saved tails keep their timestamps.
+                if (self.profile=='Auto' and not self.stop_event.is_set() and not self.queue.empty()
+                        and time.perf_counter()-enqueued>.150):
+                    with self.lock:self.dropped+=1;self.backlog_skipped+=1
+                    continue
                 h,w=frame.image.shape[:2]
                 if self.size is None:
                     self.source_size=(w,h);self.first_time=frame.decoded_at
                     kinds=['clean','prediction'] if self.mode=='Both videos' else ['clean' if self.mode=='Clean video' else 'prediction']
-                    hardware,self.fallback_reason=probe_nvenc(w,h,len(kinds)) if self.profile!='720p' else (False,'720p software profile selected')
+                    probe_size=recording_size(w,h,self.profile,True)
+                    hardware,self.fallback_reason=probe_nvenc(*probe_size,len(kinds)) if self.profile!='720p' else (False,'720p software profile selected')
                     self.encoder='h264_nvenc' if hardware else 'libx264'
                     self.size=recording_size(w,h,self.profile,hardware)
                     try:outputs=self._open_outputs(kinds,*self.size)
@@ -141,16 +167,23 @@ class VideoRecorder:
                 if self.source_size!=(w,h):raise RuntimeError('Video resolution changed; start a new recording.')
                 pts=max(last_pts+1,round((frame.decoded_at-self.first_time)*90000));last_pts=pts
                 row=dict(frame_id=frame.frame_id,decoded_at=frame.decoded_at,pts=pts,time_base='1/90000',resolution=self.size)
-                started=time.monotonic();sources={}
+                started=time.perf_counter();sources={}
                 if 'clean' in outputs:
                     sources['clean']=frame.image if self.size==(w,h) else cv2.resize(frame.image,self.size,interpolation=cv2.INTER_AREA)
                 if 'prediction' in outputs:
-                    sources['prediction'],_,overlay=render_bundle(frame,None,decision,'Live prediction',now=frame.decoded_at,output_size=self.size)
+                    # Resize once for a pair; the renderer copies this buffer
+                    # before drawing, so the clean recording stays clean.
+                    base=sources.get('clean')
+                    if base is None:base=frame.image if self.size==(w,h) else cv2.resize(frame.image,self.size,interpolation=cv2.INTER_AREA)
+                    sources['prediction'],_,overlay=render_bundle(frame,None,decision,'Live prediction',now=frame.decoded_at,
+                        output_size=self.size,display_base=base)
                     row['overlay']=overlay
                 futures=[pool.submit(self._encode,output,sources[kind],pts) for kind,output in outputs.items()]
                 for future in futures:future.result()
-                ended=time.monotonic()
+                ended=time.perf_counter()
                 row.update(encode_ms=(ended-started)*1000,queue_age_ms=(started-enqueued)*1000)
+                row['decision_snapshot_age_ms']=(None if not decision or decision.get('prediction_time') is None
+                    else (frame.decoded_at-decision['prediction_time'])*1000)
                 metadata.write(json.dumps(row,allow_nan=False)+'\n')
                 with self.lock:
                     self.written+=1;self.last_time=frame.decoded_at

@@ -69,6 +69,7 @@ class FollowLabWindow:
         self.dance_rejection=''; self.last_control_indicator=None
         self.dance_selected=False; self.dance_terminal_seen=False
         self.closing=False; self.focus_check_id=None
+        self.real_time=False;self.runtime_ui_at=0.
         self.last_image=None; self.last_frame=None; self.last_meta=None; self.photo=None; self.draw_key=None
         self.rates=deque(maxlen=90); self.started=time.monotonic()
         self.config_path=self.base/'config.local.json'; cfg={}
@@ -107,7 +108,8 @@ class FollowLabWindow:
         self.connect_button=ttk.Button(bar,text='Connect',command=self.connect); self.connect_button.pack(side='left',padx=4)
         self.disconnect_button=ttk.Button(bar,text='Disconnect',command=self.disconnect,state='disabled'); self.disconnect_button.pack(side='left',padx=4)
         self.record=tk.BooleanVar(value=False)
-        ttk.Checkbutton(bar,text='Save raw video for this session',variable=self.record).pack(side='left',padx=12)
+        self.raw_record_button=ttk.Checkbutton(bar,text='Save raw video for this session',variable=self.record)
+        self.raw_record_button.pack(side='left',padx=12)
 
         compute_bar=ttk.Frame(root,padding=(12,4)); compute_bar.pack(fill='x')
         ttk.Label(compute_bar,text='Compute').pack(side='left')
@@ -140,6 +142,8 @@ class FollowLabWindow:
         ttk.Button(manual_bar,text='Land (R)',command=lambda:self.manual_action('land')).pack(side='left',padx=4)
         self.dance_button=ttk.Button(manual_bar,text='START DANCE',command=self.toggle_dance)
         self.dance_button.pack(side='left',padx=8)
+        self.realtime_button=ttk.Button(manual_bar,text='Real-Time: OFF',command=self.toggle_real_time)
+        self.realtime_button.pack(side='left',padx=4)
         self.manual_status=tk.StringVar(value='Keyboard disconnected | Start Control Server on phone')
         ttk.Label(root,textvariable=self.manual_status,padding=(12,2),foreground='#6ad5cb').pack(fill='x')
         self.dance_status=tk.StringVar(value='Dance off | Take off manually, enable control, then Start NEO Dance')
@@ -168,7 +172,8 @@ class FollowLabWindow:
         self.capture_button=ttk.Button(capture,text='Save',command=self.capture_action,width=7)
         self.capture_button.pack(side='left')
         self.recording_status=tk.StringVar(value='No recording')
-        ttk.Label(left,textvariable=self.recording_status,foreground='#d9b56c').pack(fill='x',pady=(0,5))
+        self.recording_label=ttk.Label(left,textvariable=self.recording_status,foreground='#d9b56c')
+        self.recording_label.pack(fill='x',pady=(0,5))
         self.canvas=tk.Canvas(left,bg='#090f15',highlightthickness=0)
         self.canvas.pack(fill='both',expand=True)
         self.canvas.bind('<Button-1>',lambda event:self.canvas.focus_set())
@@ -177,7 +182,7 @@ class FollowLabWindow:
         self.video_stats=tk.StringVar(value='Waiting for live video')
         ttk.Label(left,textvariable=self.video_stats,wraplength=950,padding=8).pack(fill='x')
 
-        sidebar=ttk.Frame(body); sidebar.grid(row=0,column=1,sticky='nsew')
+        sidebar=ttk.Frame(body); sidebar.grid(row=0,column=1,sticky='nsew');self.sidebar=sidebar
         self.tabs=ttk.Notebook(sidebar,width=410);self.tabs.pack(fill='both',expand=True)
         self.diagram_tab=ttk.Frame(self.tabs,padding=5)
         self.tabs.add(self.diagram_tab,text='Live states')
@@ -384,7 +389,7 @@ class FollowLabWindow:
             try: socket.inet_pton(socket.AF_INET,host)
             except OSError: socket.inet_pton(socket.AF_INET6,host)
             self.settings=self.read_settings(); self.save_config()
-            self.session=FollowSession(self.base,host,self.codec.get(),self.settings,self.record.get(),self.compute.get(),self.device.get(),self.model.get(),self.recording_profile.get())
+            self.session=FollowSession(self.base,host,self.codec.get(),self.settings,self.record.get(),self.compute.get(),self.device.get(),self.model.get(),self.recording_profile.get(),real_time=getattr(self,'real_time',False))
             self.session.control_provider=self.control_snapshot
             self.session.start(); self.rates.clear(); self.mark_dirty()
             self.model_picker.configure(state='disabled');self.recording_picker.configure(state='disabled');self.compute_picker.configure(state='disabled'); self.device_picker.configure(state='disabled')
@@ -447,6 +452,7 @@ class FollowLabWindow:
             self.notice.set('Enter a numeric Phone IP before connecting keyboard.'); return
         self.manual=ManualControl(host,on_event=self.log_control,decision_provider=self.dance_decision,
                                   require_target_policy=True)
+        self.manual.detailed_logging=not getattr(self,'real_time',False)
         self.manual.set_axis_limits(self.current_axis_limits())
         if self.dance_selected: self.manual.start_dance()
         self.manual.start()
@@ -663,6 +669,7 @@ class FollowLabWindow:
             if getattr(self,'closing',False): return
             focused=safe_focus_widget(self.root)
             if focused is self.canvas: return
+            if focused is not None and focused is getattr(self,'realtime_button',None):return
             toolbar=getattr(self,'control_bar',None)
             speedbar=getattr(self,'speed_bar',None)
             viewbar=getattr(self,'view_bar',None)
@@ -726,6 +733,7 @@ class FollowLabWindow:
         else: self.notice.set(str(path))
 
     def snapshot(self):
+        if getattr(self,'real_time',False):return
         if self.last_image is None or self.last_frame is None: return
         path=self.session.output if self.session else self.base/'logs'; path.mkdir(exist_ok=True)
         stamp=time.time_ns(); out=path/f'snapshot_{stamp}.png'
@@ -756,6 +764,8 @@ class FollowLabWindow:
             decision=self.dance_decision()
             if self.finish_terminal_dance(decision): decision=None
             self.manual.update(self.pressed & MOVEMENT_KEYS,decision)
+            if getattr(self,'real_time',False):
+                self.refresh_real_time(refresh_started);return
             self.manual_button.configure(text='Disconnect keyboard' if self.manual.thread.is_alive() else 'Connect keyboard')
             snapshot=self.manual.control_snapshot();test=snapshot.get('search_test')
             transport=snapshot.get('transport') or {};ack=transport.get('last_ack')
@@ -767,6 +777,8 @@ class FollowLabWindow:
                     f"Measured {test.get('measured_offset_degrees',0):+.1f} deg | target {test.get('target_offset_degrees',0):+.1f} deg\n"
                     f"Range {test.get('scan_min_degrees',0):+.0f} to {test.get('scan_max_degrees',0):+.0f} deg\n"
                     f"Log: search_test_{test.get('run_id','')}")
+        if getattr(self,'real_time',False):
+            self.refresh_real_time(refresh_started);return
         s=self.session
         if s and not self.stopping:
             now=time.monotonic(); frame=s.receiver.frames.get(); analysis=s.analysis.get(); decision=s.decision.get()
@@ -864,7 +876,7 @@ class FollowLabWindow:
         recording=recorder.status() if recorder else None
         if recording:
             self.recording_status.set(f"{recording['state']} | {recording['mode']} | {recording['elapsed_seconds']:.1f}s | "
-                                      f"{recording.get('encoder','starting')} | {recording.get('resolution')} | {recording.get('recorded_fps',0):.1f} FPS | skipped {recording['dropped']}"
+                                      f"{recording.get('encoder','starting')} | {recording.get('resolution')} | {recording.get('recorded_fps',0):.1f} FPS / target {recording.get('target_fps',30)} | skipped {recording['dropped']}"
                                       +(f" | {recording['error']}" if recording['error'] else ''))
         busy=bool(recorder and recorder.thread.is_alive())
         self.capture_button.configure(text='Save' if self.capture_mode.get()=='Snapshot' else 'Stop' if busy else 'Start')
@@ -877,6 +889,7 @@ class FollowLabWindow:
         self.settings_note.set('Changes pending - press Apply' if dirty else 'Settings applied / saved')
 
     def capture_action(self):
+        if getattr(self,'real_time',False):return
         if self.capture_mode.get()=='Snapshot': self.snapshot(); return
         try:
             if not self.session: raise RuntimeError('Connect to live video first.')
@@ -884,3 +897,52 @@ class FollowLabWindow:
             if recorder and recorder.thread.is_alive(): self.session.stop_recording()
             else: self.session.start_recording(self.capture_mode.get())
         except Exception as exc: messagebox.showerror('Recording',str(exc))
+
+    def toggle_real_time(self):
+        enabled=not self.real_time
+        if self.session:self.session.set_real_time(enabled)
+        self.real_time=enabled;self.runtime_ui_at=0.;self.rates.clear()
+        if self.manual:self.manual.detailed_logging=not enabled
+        self.realtime_button.configure(text='Real-Time: ON' if enabled else 'Real-Time: OFF')
+        self.capture_button.configure(state='disabled' if enabled else 'normal')
+        self.raw_record_button.configure(state='disabled' if enabled else 'normal')
+        self.canvas.delete('all');self.draw_key=None
+        self.last_image=self.last_frame=self.last_meta=self.last_render=self.photo=None
+        if enabled:
+            self.record.set(False);self.sidebar.grid_remove();self.view_bar.pack_forget()
+            self.canvas.create_text(25,70,anchor='nw',fill='#6ad5cb',font=('Segoe UI',16,'bold'),
+                text='REAL-TIME\n\nYOLO + BoT-SORT + NanoTrack remain active.\nTCP control and safety checks remain active.\nVideo display, boxes, recordings and diagram are off.\nCompact log: 1 Hz + state changes and faults.')
+            self.notice.set('Real-Time ON. Previous recordings are finishing in the background. Tracking settings unchanged.')
+        else:
+            self.sidebar.grid();self.view_bar.pack(fill='x',pady=(0,8),before=self.recording_label)
+            self.recording_status.set('Real-Time OFF | recordings stopped; Start to record again')
+            self.notice.set('Normal display and detailed logging restored. Recordings do not restart automatically.')
+        self.canvas.focus_set()
+
+    def refresh_real_time(self,started):
+        # Called only AFTER key reconciliation, terminal-Dance handling and
+        # manual.update(). Text is slow; the keyboard heartbeat remains 30 Hz.
+        now=time.monotonic()
+        if now-self.runtime_ui_at>=.25:
+            self.runtime_ui_at=now;s=self.session;manual=self.manual
+            alive=bool(manual and manual.thread.is_alive())
+            self.manual_button.configure(text='Disconnect keyboard' if alive else 'Connect keyboard')
+            self.manual_status.set((manual.status+' | ' if manual else '')+acknowledged_command_text(manual,now))
+            self.show_control_indicator()
+            if s and not self.stopping:
+                self.rates.append((now,s.receiver.count,s.inference_count,s.receiver.processed_count))
+                while len(self.rates)>1 and now-self.rates[0][0]>2:self.rates.popleft()
+                first=self.rates[0];elapsed=max(.01,now-first[0])
+                rates=[(current-previous)/elapsed for current,previous in zip(
+                    (s.receiver.count,s.receiver.processed_count,s.inference_count),(first[1],first[3],first[2]))]
+                decision=s.decision.get() or {};stamp=decision.get('measurement_time')
+                age='--' if stamp is None else f'{max(0.,now-stamp)*1000:.0f} ms'
+                self.state.set(target_status_text(decision) if decision else s.receiver.state)
+                error=s.receiver.error or s.model_error or s.log.error
+                self.video_stats.set(f'Real-Time | Input {rates[0]:.1f} FPS | Processed {rates[1]:.1f} FPS | YOLO {rates[2]:.1f} FPS\n'
+                    +f'Target age: {age} | {self.state.get()}'+(f' | ERROR: {error}' if error else ''))
+                closing=bool(s.recorder and s.recorder.thread.is_alive())
+                self.recording_status.set('Real-Time: finishing previous recording...' if closing else
+                    'Real-Time active | no display / recording | compact log 1 Hz')
+            else:self.video_stats.set('Real-Time | Connect video for tracking; video display stays off')
+        self.root.after(max(1,round(1000/30-(time.monotonic()-started)*1000)),self.refresh)

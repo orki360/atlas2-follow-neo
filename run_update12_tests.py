@@ -1,4 +1,4 @@
-"""Release 14.0.0: dual-class isolation plus the existing release gate."""
+"""Release 14.0.2: presentation-only Real-Time plus the existing release gate."""
 import sys
 import unittest
 from pathlib import Path
@@ -21,5 +21,7 @@ if __name__ == '__main__':
     names.insert(0, 'test_motion_continuity')
     names.insert(0, 'test_scan_controls')
     names.insert(0, 'test_control_resync')
+    names.insert(0, 'test_recording_budget')
+    names.insert(0, 'test_runtime_mode')
     result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromNames(names))
     raise SystemExit(0 if result.wasSuccessful() else 1)

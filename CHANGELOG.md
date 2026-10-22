@@ -1,5 +1,38 @@
 # CHANGELOG — Dancing Drones / Follow NEO
 
+## Version 14.0.2 — Real-Time presentation mode on original TCP — 2026-10-22
+
+- Add an explicit Real-Time ON/OFF button. Camera decoding, YOLO, BoT-SORT,
+  NanoTrack, control and all existing deadlines remain active. The mode never
+  calls configure/reset/enable or changes tracking settings or generation.
+- Skip video drawing, BBOX overlays, live diagrams and presentation snapshots.
+  Keep the keyboard heartbeat and terminal-Dance handling at the original rate;
+  compact status text updates at 4 Hz. External focus loss still pauses control.
+- Stop MP4 recording asynchronously, discard queued encoding work, and finalize
+  the current file. Stop raw recording on its receive worker. Neither restarts
+  automatically when leaving Real-Time; new recordings require explicit input.
+- Replace verbose frame/RC diagnostics with one runtime summary per second plus
+  immediate tracking/motion transitions, identity/search events and all faults.
+  TCP command counters/ACK aggregates stay active. No flight authority depends
+  on this diagnostic filtering. Detailed logging returns when the mode is off.
+- Preserve the v14.0.1 video budget, local saved configuration, original TCP
+  protocols and Android services. No UDP, APK changes or remote Git operations.
+
+## Version 14.0.1 — Video publication and recording budget — 2026-10-22
+
+- Restore the recording optimizations verified in v15.0.5, without its UDP or
+  tracking changes. Auto saves up to 720p/15 FPS, shares the resized clean buffer
+  with the overlay renderer, and discards stale recording backlog during capture.
+- Admit recording frames before reading a cached decision. Frame publication no
+  longer recalculates Nano authority or queries manual-control locks for recording.
+  Diagnostic control status retains the timestamp already read by the control
+  worker; it does not grant authority or extend any deadline.
+- Default video processing target and this machine's saved video_fps are 60.
+  Incoming decoded FPS, processed FPS and YOLO FPS remain separate counters.
+  No camera setting, decoder, source timestamp, model, inference rate, control
+  protocol, tracking safety limit or Android service changed. Live 60 FPS must
+  still be verified on the actual incoming phone stream.
+
 ## Version 14.0.0 / tracking-recovery-14 — Application version aligned with v14 branch — 2026-10-18
 
 - Set the shared application version to 14.0.0 to distinguish this branch from

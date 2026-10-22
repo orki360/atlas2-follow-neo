@@ -137,7 +137,7 @@ class ModelTests(unittest.TestCase):
 class RecordingTests(unittest.TestCase):
     def test_explicit_resolution_and_auto_policy(self):
         self.assertEqual(recording_size(1920,1080,'Auto',False),(1280,720))
-        self.assertEqual(recording_size(1920,1080,'Auto',True),(1920,1080))
+        self.assertEqual(recording_size(1920,1080,'Auto',True),(1280,720))
         self.assertEqual(recording_size(1920,1080,'1080p',False),(1920,1080))
     def test_hardware_unavailable_falls_back_with_visible_report(self):
         import av

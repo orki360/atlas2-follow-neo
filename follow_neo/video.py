@@ -37,6 +37,7 @@ class LatestValue:
 
 class VideoReceiver:
     def __init__(self,host,port=9999,codec='h264',raw_path=None,on_event=None,on_frame=None,processing_fps=30.):
+        self.raw_recording_enabled=True
         if int(port)!=9999:
             raise ValueError('This iteration accepts only the original video port 9999.')
         self.host=host; self.port=int(port); self.codec=codec; self.raw_path=raw_path
@@ -152,7 +153,7 @@ class VideoReceiver:
     def _run(self):
         recording=None; self.started_at=time.monotonic(); self.state='CONNECTING'
         try:
-            if self.raw_path: recording=open(self.raw_path,'wb')
+            if self.raw_path and self.raw_recording_enabled: recording=open(self.raw_path,'wb')
             while not self.stop_event.is_set():
                 try:
                     self._receive_stream(recording)
@@ -210,6 +211,10 @@ class VideoReceiver:
         connected=time.monotonic();last_bytes=connected;last_decoded=connected
         self.diagnostics.connected(connected)
         while not self.stop_event.is_set():
+            # Close on the receive worker, never wait for disk I/O in the UI.
+            # Once stopped, raw recording cannot resume in this connection.
+            if recording and not self.raw_recording_enabled:
+                recording.close();recording=None
             receive_started=time.monotonic()
             try:
                 with self.diagnostics.measure('receive'):data=self.sock.recv(262144)
@@ -223,7 +228,7 @@ class VideoReceiver:
             self.diagnostics.received(len(data),last_bytes)
             self.timing=dict(self.timing,last_receive_at=last_bytes,
                 last_receive_wait_ms=max(0.,last_bytes-receive_started)*1000)
-            if recording:
+            if recording and self.raw_recording_enabled:
                 with self.diagnostics.measure('raw_record_write'):recording.write(data)
             with self.diagnostics.measure('parse'):packets=codec.parse(data)
             self.diagnostics.count('packets',len(packets))

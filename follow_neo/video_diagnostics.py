@@ -7,6 +7,7 @@ import time
 
 class VideoDiagnostics:
     def __init__(self):
+        self.enabled=True
         self.lock=threading.Lock()
         self.phase='idle';self.phase_since=time.monotonic()
         self.since=self.phase_since;self.cpu_since=time.process_time()
@@ -16,6 +17,8 @@ class VideoDiagnostics:
 
     @contextmanager
     def measure(self,phase):
+        if not self.enabled:
+            yield;return
         started=time.monotonic();cpu=time.thread_time()
         worker=threading.get_ident()
         with self.lock:
@@ -35,6 +38,7 @@ class VideoDiagnostics:
                 else:self.phase='idle';self.phase_since=time.monotonic()
 
     def count(self,name,value=1):
+        if not self.enabled:return
         with self.lock:self.counters[name]=self.counters.get(name,0)+value
 
     def connected(self,now):
@@ -42,6 +46,7 @@ class VideoDiagnostics:
             self.connection_started=now;self.last_bytes=None;self.last_keyframe=None
 
     def received(self,size,now):
+        if not self.enabled:return
         with self.lock:
             if self.last_bytes is not None:
                 gap=max(0.,now-self.last_bytes)*1000
@@ -51,6 +56,7 @@ class VideoDiagnostics:
             self.counters['receives']=self.counters.get('receives',0)+1
 
     def decoded(self,keyframe,now):
+        if not self.enabled:return
         with self.lock:
             self.counters['decoded']=self.counters.get('decoded',0)+1
             if keyframe is True:

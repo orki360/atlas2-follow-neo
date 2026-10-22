@@ -84,7 +84,7 @@ def draw_forward_window(image,decision):
     return dict(width=fw,height=fh,display_box=[x1,y1,x2,y2])
 
 
-def render_bundle(frame,analysis,decision,mode,stale_seconds=.75,now=None,output_size=None):
+def render_bundle(frame,analysis,decision,mode,stale_seconds=.75,now=None,output_size=None,display_base=None):
     now=time.monotonic() if now is None else now
     metadata={'display_mode':mode,'detections':[],'selected_box':None,'display_box':None}
     if mode=='Analyzed frame' and analysis:
@@ -116,7 +116,7 @@ def render_bundle(frame,analysis,decision,mode,stale_seconds=.75,now=None,output
         title=f'ANALYZED frame {chosen.frame_id} | YOLO on this frame | age {max(0.,age)*1000:.0f} ms'
         metadata['inference_ms']=result['inference_ms']
     elif frame:
-        chosen=frame;image,scale=display_image(chosen,output_size);bound=decision
+        chosen=frame;image,scale=display_image(chosen,output_size,display_base);bound=decision
         box=box_at_frame(chosen,bound,now)
         confidence=bound.get('tracking_confidence') if bound else None
         support=bound.get('track_support','yolo') if bound else 'none'
@@ -226,8 +226,12 @@ def render_bundle(frame,analysis,decision,mode,stale_seconds=.75,now=None,output
     return image,chosen,metadata
 
 
-def display_image(frame,output_size):
+def display_image(frame,output_size,display_base=None):
     h,w=frame.image.shape[:2]
+    if display_base is not None:
+        ow,oh=output_size or (w,h)
+        if display_base.shape!=(oh,ow,3):raise ValueError('Display base must match output size')
+        return display_base.copy(),(ow/w,oh/h)
     if output_size is None or tuple(output_size)==(w,h):return frame.image.copy(),(1.,1.)
     ow,oh=output_size
     return cv2.resize(frame.image,(ow,oh),interpolation=cv2.INTER_AREA),(ow/w,oh/h)
