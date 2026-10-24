@@ -352,6 +352,7 @@ def apply_visual(decision, visual, now):
     out.pop('nano_forward_source_time',None)
     out.pop('nano_handoff',None);out.pop('nano_intent_time',None)
     out.pop('nano_soft_veto_overridden',None)
+    out.pop('curve_motion',None)
     from follow_neo.control.pursuit import recovery_vector
     out['recovery_motion']=recovery_vector(out,visual,now)
     decision=out
@@ -385,6 +386,24 @@ def apply_visual(decision, visual, now):
             and decision.get('state')=='DIRECTIONAL_SEARCH' and search.get('active')
             and search.get('phase') in ('SCAN','BOOST')):
         out['nano_authority']='search';return out
+    from follow_neo.control.curve import verified_curve
+    curve=verified_curve(out,visual,now)
+    curve_context=bool(out.get('curve_anchor') and out.get('state') in ('TRACK','COAST')
+                       and (not out.get('accepted') or not measurement_current))
+    if curve_context:
+        # Once a loss is being bridged by this shorter contract, an older
+        # recovery vector must not restart forward motion as the curve expires.
+        # New real measurements can seed movement again; search is separate.
+        out['recovery_motion']=dict(allowed=False,reason='curve_contract_active',roll=0.,forward=0.)
+    if out.get('curve_anchor'):out['curve_motion']=curve
+    if curve['allowed']:
+        basis=out.get('intent_basis') or {}
+        if all(finite(basis.get(k)) and 0<basis[k]<=1 for k in ('yaw','forward')):
+            out['intent']=dict(yaw=curve['yaw']*basis['yaw'],vertical=0.,roll=0.,forward=curve['forward']*basis['forward'])
+            out['nano_authority']='curve_bridge'
+            out['recovery_motion']=dict(allowed=False,reason='verified_curve_selected',roll=0.,forward=0.)
+            diagnostics['forward_reason']='verified_curve_decay'
+            return out
     if out['recovery_motion']['allowed']:
         out['nano_authority']='recovery_vector';return out
     yolo_fresh=bool(decision.get('accepted') and decision.get('confirmed')
@@ -448,7 +467,7 @@ def apply_visual(decision, visual, now):
         window_x=min(.35,options.get('forward_window_width',.35))
         window_y=min(.35,options.get('forward_window_height',.35))
         clear=bool(box[0]>.02*width and box[2]<.98*width and box[1]>.02*height and box[3]<.98*height)
-        if (anchor.get('allowed') and anchor.get('identity')==identity
+        if (not curve_context and anchor.get('allowed') and anchor.get('identity')==identity
                 and isinstance(source,(float,int)) and 0<=now-source<FORWARD_BRIDGE_SECONDS
                 and 0<=visual['semantic_time']-source<=.20
                 and decision.get('state') in ('TRACK','COAST','REACQUIRE')
@@ -468,6 +487,8 @@ def apply_visual(decision, visual, now):
                 forward_source_age_ms=(now-source)*1000,
                 semantic_to_forward_ms=(visual['semantic_time']-source)*1000,
                 used_history=source!=diagnostics['latest_forward_source_time'])
+        elif curve_context:
+            diagnostics['forward_reason']=curve['reason']
         elif anchor:
             diagnostics['forward_reason']=('spacing_or_edge' if decision.get('spacing_phase')!='APPROACH'
                 or decision.get('spacing_close_guard_armed') or decision.get('bbox_clipped') else
@@ -484,6 +505,20 @@ def transport_visual_reason(sent, latest, now):
     """Check the captured permission AND live veto before/while awaiting ACK."""
     old = (sent or {}).get('nano')
     new = (latest or {}).get('nano')
+    if (sent or {}).get('nano_authority')=='curve_bridge':
+        from follow_neo.control.curve import verified_curve
+        # Live Nano may replace an expired visual sample, never the captured
+        # real source / curve deadline. The pending-command gate checks that
+        # the actual wire value still fits both grants before allowing renewal.
+        if not latest or not verified_curve(sent,new,now)['allowed']:
+            return 'verified_curve_revoked'
+        fresh_source=latest.get('measurement_time');old_source=sent.get('measurement_time')
+        if (latest.get('accepted') and finite(fresh_source) and finite(old_source)
+                and fresh_source>old_source and 0<=now-fresh_source<=MEASUREMENT_SECONDS):
+            return 'curve_refresh_required'
+        if (not verified_curve(latest,new,now)['allowed']
+                or (sent.get('curve_anchor') or {}).get('source_time')!=(latest.get('curve_anchor') or {}).get('source_time')):
+            return 'verified_curve_revoked'
     if (sent or {}).get('recovery_motion',{}).get('allowed'):
         from follow_neo.control.pursuit import recovery_vector
         if (not latest or not recovery_vector(sent,old,now)['allowed']

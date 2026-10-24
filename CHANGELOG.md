@@ -1,5 +1,65 @@
 # CHANGELOG — Dancing Drones / Follow NEO
 
+## Version 16.0.3 — Early verified curves and HARD timing epochs — 2026-10-22
+
+- Within TRACK, lead yaw from three coherent, outward real NEO measurements,
+  gated by sustained identity, fresh heading and the coordinated-turn option.
+  Bound lead to 120 ms / 0.10 image error; remove it on inward motion or reversal.
+  Preserve distance, image-window, rate and axis limits; no minimum forward boost.
+- Save an already authorized yaw/forward command. A brief loss may decay it
+  with current guarded Nano, fresh video/heading and the same identity/epoch.
+  Keep the original 350 ms real-source ceiling and a 20-degree body-heading
+  bound. Recheck at TCP dispatch and pending ACK; current compatible proof may
+  bridge visual sample turnover without extending the real-source deadline.
+- Prevent an older, longer recovery vector from restarting forward motion at
+  curve expiry. Preserve separate search behavior and other recovery routes.
+  Add curve
+  evidence to ordinary decisions/command logs; HARD still records no diagnostics.
+- Invalidate diagnostic samples crossing a HARD mode transition in YOLO,
+  camera compensation, BoT, Nano and control timing. Preserve computation results;
+  publish null/absent durations until a complete new sample is available.
+- Set the GMC experiment baseline to 480x270 / 400 points (including this local
+  configuration). Retain explicit saved alternatives and the original 640 path.
+  No Android, protocol, ACK timeout or remote branch changes.
+
+## Version 16.0.2 — Configurable BoT-SORT camera motion — 2026-10-22
+
+- Add a BoT-SORT tab with GMC resolution and maximum feature points. Preserve
+  640x360 / 400 defaults, including old configuration files. Offer 480x270,
+  960x540, 1280x720 and 1920x1080, with 100–1000 points in steps of 50.
+- Preserve source aspect and coordinates; no upscaling. Scale pixel tolerances
+  and optical-flow windows with resolution. Keep all transform acceptance guards.
+- Apply settings in the tracking worker on fresh results. Reset only the GMC
+  frame pair when geometry/point budget changes; retain the BoT target. The
+  existing settings application still restarts control/spacing and Nano evidence.
+- Persist selections and include them in existing session/settings records and
+  ordinary tracking diagnostics. HARD retains diagnostic suppression. TCP,
+  YOLO input, Android and remote Git branches are unchanged.
+
+## Version 16.0.1 — HARD console entry from the normal launcher — 2026-10-22
+
+- The normal CMD launcher now opens one dedicated conhost console automatically,
+  including from Windows Terminal. Preserve arguments and prevent recursive launches.
+- Transfer keyboard focus before hiding Tk; allow a bounded asynchronous focus
+  handoff. Reject hidden Terminal handles and unrelated foreground windows.
+- Keep Space/focus-loss release, TCP, tracking and HARD diagnostic suppression intact.
+  No Android changes. Add native launcher and focus-handoff regression coverage.
+
+## Version 16.0.0 — REAL-TIME HARD on original TCP — 2026-10-22
+
+- Add an explicit HARD button and dedicated-console launcher. Suspend Tk refresh,
+  previews and runtime snapshot publication; retain the window for return.
+- Finish existing recording writes, suspend JSON logs, and disable optional timing,
+  FPS/ACK sampling and association reports. No HARD diagnostic buffer or summary.
+- Keep camera decoding, inference, Nano verification, BoT association, source clocks,
+  control deadlines, TCP sequencing and heartbeat safeguards. Settings are unchanged.
+- A focused console supplies original-time input heartbeats. Space, Q, Esc, focus
+  loss, video/control faults and one-shot completion stop HARD. Fence release first,
+  await disable acknowledgement, restore the normal GUI; never automatically enable.
+- Preserve the original Android services and all existing protocol ports. No APK.
+  Add offline coverage for write barriers, frozen GUI/publication, cancellation,
+  stale heartbeats, identical tracking decisions and spawned TCP integration.
+
 ## Version 14.1.1 — Session teardown and acknowledged TCP release — 2026-10-22
 
 - Ignore late display logging for retired sessions; keep stale session actions

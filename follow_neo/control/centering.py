@@ -5,6 +5,7 @@ from follow_neo.transport.telemetry import fresh_heading
 from follow_neo.shared.types import clamp
 from .. import __revision__
 from follow_neo.control.approach import LateralEvidence
+from follow_neo.control.curve import EarlyCurve
 
 
 class HeadingRate:
@@ -40,6 +41,7 @@ class DampedTrackingController(SmartTrackingController):
         self.last_measurement=None;self.error_rate=0.;self.last_tick=None
         self.centered=True;self.forward_factor=1.;self.diagnostics={}
         self.lateral=LateralEvidence()
+        self.curve=EarlyCurve()
 
     def compute(self,k,w,h,age,occluded,now,settings,heading=None,measurement_time=None,measured_error=None,lateral_observation=None,current_visual=False,continuity_verified=False):
         out,ex,ey=super().compute(k,w,h,age,occluded,now,settings)
@@ -61,18 +63,21 @@ class DampedTrackingController(SmartTrackingController):
         # Continuous demand to zero, with a small start/stop hysteresis.
         if abs(ex)<=(.06 if self.centered else .025):self.centered=True
         else:self.centered=False
-        p=.65*ex;d=.09*self.error_rate
+        combined=bool(valid and continuity_verified and age<=.25
+                      and (current_visual or not settings.forward_require_nano))
+        curve=self.curve.update(measurement_time,measured_error,now,
+            (lateral_observation or {}).get('identity_key'),valid and lateral_observation is not None,
+            combined and settings.coordinated_turns and rate is not None)
+        p=.65*(ex+curve['lead']);d=.09*self.error_rate
         # Body-rate feedback only damps a turn already directed toward the target.
         damping=.0012*rate if rate is not None and rate*ex>0 else 0.
         lead_error=ex+.14*self.error_rate
         demand=p+d-damping
         braking=ex*lead_error<=0 or demand*ex<=0
-        if self.centered or braking or not k.initialized:demand=0.
+        if (self.centered and not curve['active']) or braking or not k.initialized:demand=0.
         demand=clamp(demand,-.55,.55)
         out.yaw=demand*settings.yaw_limit
         lateral_limit=.25 if current_visual else .15
-        combined=bool(valid and continuity_verified and age<=.25
-                      and (current_visual or not settings.forward_require_nano))
         lateral_combined=combined and current_visual
         lateral_allowed=(valid and age<=lateral_limit and rate is not None and abs(rate)<=(35. if lateral_combined else 8.)
                          and abs(ex)<=(.70 if lateral_combined else .25) and abs(demand)<=(.40 if lateral_combined else .08))
@@ -115,7 +120,7 @@ class DampedTrackingController(SmartTrackingController):
             proportional=p,derivative=d,rate_damping=damping,lead_error=lead_error,
             braking=braking,centered=self.centered,yaw_normalized=demand,
             forward_alignment_scale=self.forward_factor,combined_motion=combined,
-            coordinated_turn=coordinated,
+            coordinated_turn=coordinated,early_curve=curve,
             yaw_demand_policy='slowdown' if coordinated else 'ceiling',
             forward_factors=factors,forward_limiting_factor=min(factors,key=factors.get),
             forward_window=dict(width=settings.forward_window_width,height=settings.forward_window_height),

@@ -9,6 +9,7 @@ import threading
 import time
 
 from ..diagnostics.timing import TimingWindow
+from ..diagnostics import activity
 
 
 def manual_state(manual,identity):
@@ -31,6 +32,9 @@ class Runtime:
         self.last_fence=inputs.fence.value;self.closed=False
         self.input_version=-1
         self.input_lock=threading.Lock()
+        self.input_origin='gui';self.hard=False;self.hard_ready=False;self.console_pulse=None
+        self.presentation_gate=threading.Event();self.presentation_gate.set()
+        self.presentation_lock=threading.Lock()
         self.last_live_key=None;self.live_meta=None;self.last_analysis_key=None;self.analysis_meta=None
 
     def decision(self):
@@ -51,6 +55,18 @@ class Runtime:
     def input_loop(self):
         while not self.stop.wait(.005):
             self.consume_input()
+            if self.hard_ready and (not self.manual.thread.is_alive() or not self.manual.connected or self.manual.communication_paused
+                    or not self.manual.wanted or self.session.model_error
+                    or self.session.receiver.state!='STREAMING' or self.terminal_dance()):
+                self.inputs.hard_abort.set();self.manual.release()
+
+    def terminal_dance(self):
+        # The GUI normally handles one-shot completion. It is asleep in HARD.
+        decision=self.session.decision.get()
+        return bool(decision and not decision.get('continuous_dance',True)
+            and decision.get('spacing_phase') in ('STOPPED','SEQUENCE_DONE')
+            and isinstance(decision.get('prediction_time'),(int,float))
+            and decision['prediction_time']>self.manual.dance_started)
 
     def consume_input(self):
         with self.input_lock:
@@ -61,13 +77,15 @@ class Runtime:
             message,self.input_version=self.inputs.latest.get(self.input_version)
             if not message:return
             now=time.monotonic();age=now-message['time']
-            self.timings.add('input_ipc_ms',age*1000)
-            if self.last_pulse:self.timings.add('ui_pulse_gap_ms',(message['time']-self.last_pulse)*1000)
-            self.last_pulse=message['time']
+            if not self.hard:
+                self.timings.add('input_ipc_ms',age*1000)
+                if self.last_pulse:self.timings.add('ui_pulse_gap_ms',(message['time']-self.last_pulse)*1000)
+                self.last_pulse=message['time']
             m=self.manual
             if (m and message['identity']==self.identity and message['fence']==self.inputs.fence.value
-                    and 0<=age<=.35):
+                    and message.get('origin','gui')==self.input_origin and 0<=age<=.35):
                 m.update(message['keys'],source_time=message['time'])
+                if message.get('origin')=='console':self.console_pulse=message['time']
 
     def metadata(self,images=False):
         now=time.monotonic();s=self.session
@@ -110,21 +128,25 @@ class Runtime:
     def publish_loop(self):
         last_log=0.
         while not self.stop.is_set():
+            self.presentation_gate.wait()
+            if self.stop.is_set():break
             started=time.monotonic()
             try:
                 # This is a diagnostic worker, never capture/inference/control.
-                value=self.metadata(images=not self.real_time)
-                sent=self.snapshots.put(value)
+                with self.presentation_lock:
+                    if self.hard:continue
+                    value=self.metadata(images=not self.real_time)
+                    sent=self.snapshots.put(value)
                 self.timings.add('snapshot_publish_ms',(time.monotonic()-started)*1000)
                 if not sent:self.timings.add('snapshot_skipped',1.)
-                if self.session and started-last_log>=1.:
+                if activity.enabled and self.session and started-last_log>=1.:
                     last_log=started
                     self.session.log.write('architecture_health',dict(mode='process',runtime_pid=os.getpid(),
                         gui=self.ui_metrics,timing=self.timings.snapshot(),real_time=self.real_time,
                         preview_error=self.preview_error))
             except Exception as exc:
                 self.preview_error=str(exc)
-                if self.session and started-last_log>=1.:
+                if activity.enabled and self.session and started-last_log>=1.:
                     last_log=started;self.session.log.write('presentation_error',dict(error=str(exc)))
             self.stop.wait(max(.001,(.25 if self.real_time else 1/30)-(time.monotonic()-started)))
 
@@ -132,6 +154,39 @@ class Runtime:
         from follow_neo.runtime.session import FollowSession
         from follow_neo.transport.manual import ManualControl
         if op=='ping':return dict(pid=os.getpid(),parent_pid=os.getppid())
+        if op=='hard_enter':
+            if self.hard:raise RuntimeError('HARD already active')
+            if not self.session or identity!=self.session_id or not self.manual or args[0]!=self.identity:
+                raise RuntimeError('Connect video and keyboard first')
+            with self.input_lock:
+                self.input_origin='console';self.input_version=-1;self.console_pulse=None
+            self.consume_input()
+            try:
+                m=self.manual;s=self.session
+                if not s.target_policy.get('dance_allowed'):
+                    raise RuntimeError('HARD requires the verified dual-class NEO model')
+                if m.host!=s.receiver.host or s.receiver.state!='STREAMING':
+                    raise RuntimeError('HARD requires live video from the control phone')
+                if not m.connected or not m.control_snapshot()['active'] or m.motion_hold:
+                    raise RuntimeError('Enable TCP control before HARD')
+                if (fence!=self.inputs.fence.value or self.console_pulse is None
+                        or not 0<=time.monotonic()-stamp<=.35):
+                    raise RuntimeError('Expired or cancelled HARD request; enable control and try again')
+                self.inputs.hard_abort.clear();m.manual_mode();m.detailed_logging=False
+                self.hard=True;self.presentation_gate.clear()
+                with self.presentation_lock:pass
+                s.set_hard(True)
+                self.consume_input()
+                if (fence!=self.inputs.fence.value or not m.control_snapshot()['active']
+                        or s.receiver.state!='STREAMING' or self.inputs.hard_abort.is_set()):
+                    raise RuntimeError('HARD entry cancelled or control lost')
+                m.start_dance();s.restart_control();self.hard_ready=True
+                return None
+            except Exception:
+                self.exit_hard();raise
+        if op=='hard_exit':
+            if self.hard and identity!=self.session_id:raise RuntimeError('Video session replaced')
+            return self.exit_hard()
         if op=='ui_metrics':self.ui_metrics=args[0];return None
         if op=='session_create':
             if self.session:raise RuntimeError('Disconnect current video session first')
@@ -191,6 +246,30 @@ class Runtime:
             return self._manual_call(method,args,kwargs)
         raise ValueError('Unknown runtime operation: '+op)
 
+    def exit_hard(self):
+        self.hard_ready=False
+        confirmed=True
+        try:
+            if self.manual:
+                m=self.manual;m.release();m.manual_mode()
+                confirmed=m.release_acknowledged.is_set()
+                if m.thread.is_alive():
+                    confirmed=m.release_acknowledged.wait(3.)
+                    if not confirmed:
+                        m.stop();m.thread.join(timeout=4)
+                        confirmed=m.release_acknowledged.is_set()
+                m.detailed_logging=True
+        finally:
+            try:
+                if self.session:
+                    self.session.set_hard(False);self.session.set_real_time(False)
+            finally:
+                activity.set_enabled(True)
+                self.timings=TimingWindow();self.ui_metrics={}
+                self.real_time=False;self.input_origin='gui';self.last_pulse=0.
+                self.hard=False;self.presentation_gate.set()
+        return dict(release_acknowledged=confirmed)
+
     def _manual_call(self,method,args,kwargs):
         if method=='detailed_logging':self.manual.detailed_logging=bool(args[0]);return None
         if method=='start_search_test':
@@ -201,6 +280,7 @@ class Runtime:
 
     def close(self):
         self.closed=True;self.stop.set()
+        self.presentation_gate.set()
         if self.manual:
             self.manual.stop()
             if self.manual.thread.ident:self.manual.thread.join(timeout=4)

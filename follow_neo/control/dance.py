@@ -4,6 +4,7 @@ from follow_neo.control.nano_guard import guard_reason, FORWARD_BRIDGE_SECONDS, 
 from follow_neo.control.edge_search import yaw_override
 from follow_neo.control.recovery_search import scan_command
 from follow_neo.control.pursuit import recovery_vector
+from follow_neo.control.curve import verified_curve
 from follow_neo.control.control_status import target_status_text
 from follow_neo.perception.models import DUAL_MODELS,NEO_CLASS_ID,NEO_CLASS_NAME
 from follow_neo.perception.prediction import (COAST_SECONDS, COAST_YAW, COAST_VERTICAL, STABLE_FORWARD_SECONDS,
@@ -22,7 +23,7 @@ def dance_command(decision,now,started,*,require_target_policy=False,resume_afte
         return ZERO,'Nano hold / '+str(visual_block or decision.get('nano_block_reason'))
     if visual and visual.get('mode')=='guarded' and not independent:
         if (visual.get('identity')!=(decision.get('target_identity') or {}).get('logical_target_id')
-                or decision.get('nano_authority') not in ('bridge_yaw','bridge_forward','verified_yaw')):
+                or decision.get('nano_authority') not in ('bridge_yaw','bridge_forward','verified_yaw','curve_bridge')):
             return ZERO,'Nano hold / identity or authority missing'
     # Live GUI transport requires this contract. The optional argument retains
     # the historical headless replay API; a supplied policy is always enforced.
@@ -53,6 +54,10 @@ def dance_command(decision,now,started,*,require_target_policy=False,resume_afte
                 return ZERO,'Recovery hold / waiting for new target measurement'
             if decision.get('nano_authority') in ('bridge_yaw','bridge_forward') and visual.get('semantic_time',0)<=resume_after:
                 return ZERO,'Recovery hold / waiting for new Nano anchor'
+    if decision.get('nano_authority')=='curve_bridge':
+        curve=verified_curve(decision,visual,now,max(started,resume_after or started))
+        if not curve['allowed']:return ZERO,'Curve hold / '+curve['reason']
+        return (curve['yaw'],0.,0.,curve['forward']),'Verified curve / bounded decay'
     vector=recovery_vector(decision,visual,now,max(started,resume_after or started))
     if decision.get('nano_authority')=='recovery_vector':
         if not vector['allowed']:return ZERO,'Recovery vector hold / '+vector['reason']

@@ -11,6 +11,7 @@ from follow_neo.control.centering import DampedTrackingController
 from follow_neo.control.approach import forward_diagnostics
 from follow_neo.perception.class_memory import NeoClassMemory
 from follow_neo.control.pursuit import RecoveryVector
+from follow_neo.control.curve import CurveContinuation
 from follow_neo.control.nano_guard import ForwardAnchorHistory, RealNeoEvidence, MEASUREMENT_SECONDS, current_visual_support, sustained_real_neo
 from follow_neo.perception.prediction import (COAST_SECONDS, COAST_YAW, COAST_VERTICAL, STABLE_FORWARD_SECONDS,
                          fade, forward_fade, continuation_threshold)
@@ -47,6 +48,7 @@ class FollowController:
         self.forward_anchors=ForwardAnchorHistory()
         self.real_neo_evidence=RealNeoEvidence()
         self.recovery_vector=RecoveryVector()
+        self.curve_continuation=CurveContinuation()
         self.edge_search=RecoverySearch() if self.tracker_backend=='botsort' else EdgeYawSearch()
         self.raw_detections=[]
         self.detection_summary={}
@@ -60,6 +62,7 @@ class FollowController:
         self.forward_anchors=ForwardAnchorHistory()
         self.real_neo_evidence=RealNeoEvidence()
         self.recovery_vector=RecoveryVector()
+        self.curve_continuation=CurveContinuation()
         self.edge_search.reset()
         self.control_result_floor=self.result_id
 
@@ -105,6 +108,7 @@ class FollowController:
         if self.tracker_backend=='legacy' and t.measurement_time is not None and now-t.measurement_time>settings.reacquire_seconds:
             t.reset()
         kwargs={'image':image,'continuity':continuity if support is None else None,
+                'gmc_settings':(settings.gmc_resolution,settings.gmc_max_corners),
                 'match_thresholds':(settings.botsort_match_threshold,settings.botsort_low_match_threshold,
                                     settings.botsort_unconfirmed_match_threshold)} if self.tracker_backend=='botsort' else {}
         accepted=t.update(detections,source_time,now,frame_id,
@@ -348,4 +352,6 @@ class FollowController:
             'scan_observation_degrees','scan_yaw_limit','scan_observation_mode','scan_observation_yaw')}
         self.recovery_vector.remember(decision,visual,now,control_available)
         decision['recovery_anchor']=self.recovery_vector.snapshot()
+        self.curve_continuation.remember(decision,visual,now,control_available)
+        decision['curve_anchor']=self.curve_continuation.snapshot()
         return decision

@@ -33,14 +33,14 @@ def pending_motion_status(sent, latest, now, started, wire_values, limits,
         to_authority=(latest or {}).get('nano_authority'),
         captured_visual_age_ms=(now-old['visual_time'])*1000 if finite(old.get('visual_time')) else None,
         latest_visual_age_ms=(now-new['visual_time'])*1000 if finite(new.get('visual_time')) else None)
-    if reason not in ('visual_expired', 'visual_deadline') or old.get('blocked', True):
+    if reason not in ('visual_expired', 'visual_deadline', 'curve_refresh_required') or old.get('blocked', True):
         return result
     # Only a worker-generated visual deadline can be replaced. Explicit or
     # malformed shorter deadlines remain revocations.
     if reason == 'visual_deadline' and abs(old['deadline']-min(
             old['semantic_time']+BRIDGE_SECONDS, old['visual_time']+VISUAL_SECONDS)) > 1e-9:
         return result
-    if not latest or latest.get('nano_authority') not in ('verified_yaw', 'yolo_only', 'bridge_yaw', 'bridge_forward'):
+    if not latest or latest.get('nano_authority') not in ('verified_yaw', 'yolo_only', 'bridge_yaw', 'bridge_forward', 'curve_bridge'):
         return result
     if (wire_values[3]>0 and (latest.get('spacing_close_guard_armed') or latest.get('bbox_clipped')
             or latest.get('spacing_phase')!='APPROACH')

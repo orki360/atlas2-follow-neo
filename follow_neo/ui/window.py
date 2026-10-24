@@ -16,6 +16,7 @@ import cv2
 from PIL import Image, ImageTk
 from .. import __version__, __revision__
 from follow_neo.shared.types import Settings, settings_from_config
+from follow_neo.shared.gmc import GMC_RESOLUTIONS, GMC_MIN_CORNERS, GMC_MAX_CORNERS
 from follow_neo.runtime.session import FollowSession
 from follow_neo.presentation.overlay import render_bundle
 from follow_neo.perception.models import DEFAULT_MODEL,MODEL_NAMES,DUAL_MODELS,model_from_config
@@ -72,6 +73,7 @@ class FollowLabWindow:
         self.dance_selected=False; self.dance_terminal_seen=False
         self.closing=False; self.focus_check_id=None
         self.real_time=False;self.runtime_ui_at=0.
+        self.hard_active=False
         self.last_image=None; self.last_frame=None; self.last_meta=None; self.photo=None; self.draw_key=None
         self.rates=deque(maxlen=90); self.started=time.monotonic()
         self.config_path=self.base/'config.local.json'; cfg={}
@@ -146,6 +148,8 @@ class FollowLabWindow:
         self.dance_button.pack(side='left',padx=8)
         self.realtime_button=ttk.Button(manual_bar,text='Real-Time: OFF',command=self.toggle_real_time)
         self.realtime_button.pack(side='left',padx=4)
+        self.hard_button=ttk.Button(manual_bar,text='REAL-TIME HARD',command=self.start_hard)
+        self.hard_button.pack(side='left',padx=4)
         self.manual_status=tk.StringVar(value='Keyboard disconnected | Start Control Server on phone')
         ttk.Label(root,textvariable=self.manual_status,padding=(12,2),foreground='#6ad5cb').pack(fill='x')
         self.dance_status=tk.StringVar(value='Dance off | Take off manually, enable control, then Start NEO Dance')
@@ -205,6 +209,7 @@ class FollowLabWindow:
         right,self.status_tab=page('Tracking')
         controls_page,self.controls_tab=page('Control / Search')
         settings_page,self.settings_tab=page('Settings')
+        bot_page,self.botsort_tab=page('BoT-SORT')
         self.speed_bar=ttk.LabelFrame(controls_page,text='Axis limits',padding=8); self.speed_bar.pack(fill='x')
         ttk.Label(self.speed_bar,text='Normal tracking and keyboard (%)',foreground='#6ad5cb').pack(anchor='w')
         stored_limits=cfg.get('axis_limits',{})
@@ -282,10 +287,32 @@ class FollowLabWindow:
                   ('Stop BBOX width %','stop_width',1,50,2),('Yaw limit %','yaw_limit',10,100,5),
                   ('Vertical limit %','vertical_limit',10,100,5),('Forward limit %','forward_limit',0,100,5)]
         self.percent={'stop_width','yaw_limit','vertical_limit','forward_limit','search_yaw'}
+        bot_match=ttk.LabelFrame(bot_page,text='Detection association',padding=8);bot_match.pack(fill='x',pady=5)
         for row,(label,key,lo,hi,step) in enumerate(controls):
-            ttk.Label(settings,text=label).grid(row=row,column=0,sticky='w',pady=3)
+            parent=bot_match if key.startswith('botsort_') else settings
+            ttk.Label(parent,text=label).grid(row=row,column=0,sticky='w',pady=3)
             self.vars[key]=tk.StringVar(value=f'{values[key]*(100 if key in self.percent else 1):g}')
-            ttk.Spinbox(settings,textvariable=self.vars[key],from_=lo,to=hi,increment=step,width=7).grid(row=row,column=1,padx=(8,0))
+            ttk.Spinbox(parent,textvariable=self.vars[key],from_=lo,to=hi,increment=step,width=7).grid(row=row,column=1,padx=(8,0))
+        gmc=ttk.LabelFrame(bot_page,text='Camera motion compensation (GMC)',padding=8);gmc.pack(fill='x',pady=5,before=bot_match)
+        self.gmc_resolution=tk.StringVar(value=values['gmc_resolution'])
+        ttk.Label(gmc,text='GMC resolution (W x H)').grid(row=0,column=0,sticky='w',pady=5)
+        self.gmc_resolution_picker=ttk.Combobox(gmc,textvariable=self.gmc_resolution,
+            values=GMC_RESOLUTIONS,state='readonly',width=13)
+        self.gmc_resolution_picker.grid(row=0,column=1,padx=(6,0))
+        self.vars['gmc_max_corners']=tk.StringVar(value=str(values['gmc_max_corners']))
+        ttk.Label(gmc,text='Maximum feature points').grid(row=1,column=0,sticky='w',pady=5)
+        self.gmc_points_picker=ttk.Spinbox(gmc,textvariable=self.vars['gmc_max_corners'],
+            from_=GMC_MIN_CORNERS,to=GMC_MAX_CORNERS,increment=50,width=13)
+        self.gmc_points_picker.grid(row=1,column=1,padx=(6,0))
+        ttk.Label(gmc,text='Default: 480x270 / 400 points.\n640x360: previous baseline. 960x540: more detail.\n1280x720 / 1920x1080: heavier experiments.\nMore points is a cap, not a guaranteed count.\nSource aspect is preserved; no upscaling.\nThis does not change YOLO or the video stream.',
+                  wraplength=340,foreground='#8cbbb8').grid(row=4,columnspan=2,sticky='w',pady=6)
+        self.gmc_apply_button=ttk.Button(gmc,text='Apply GMC / save',command=self.apply_gmc)
+        self.gmc_apply_button.grid(row=2,columnspan=2,sticky='ew',pady=4)
+        self.gmc_note=tk.StringVar()
+        ttk.Label(gmc,textvariable=self.gmc_note,wraplength=340,foreground='#d9b56c').grid(row=3,columnspan=2,sticky='w')
+        ttk.Label(bot_page,text='GMC Apply saves only these two fields.\nIt retains the target and waits for a fresh measurement.\nChange between comparisons, then enter HARD.\nHARD uses the saved selection without diagnostic logging.',
+                  wraplength=340,foreground='#8cbbb8').pack(anchor='w',pady=5)
+        ttk.Button(bot_page,text='Apply all settings / save',command=self.apply).pack(fill='x',pady=5)
         motion_page,self.motion_tab=page('Motion')
         self.motion_controls={}
         self.percent.update(('forward_window_width','forward_window_height','forward_soft_zone',
@@ -351,8 +378,8 @@ class FollowLabWindow:
         ttk.Label(settings,textvariable=self.settings_note,foreground='#d9b56c',wraplength=285).grid(row=len(controls)+3,columnspan=2,sticky='w',pady=6)
         ttk.Label(settings,text='Scan reverses at each angle boundary until timeout.\n0 deg disables recovery. Heading uses TCP 9997.\nTarget loss keeps Dance ON; reacquisition is automatic.',
                   foreground='#8cbbb8',wraplength=285).grid(row=len(controls)+4,columnspan=2,sticky='w')
-        ttk.Label(settings,text='BoT costs: higher = looser matching.\nDefaults: primary 0.80 / weak 0.50 / tentative 0.70.\nIdentity, freshness and Nano background guards still apply.',
-                  foreground='#8cbbb8',wraplength=285).grid(row=len(controls)+5,columnspan=2,sticky='w',pady=5)
+        ttk.Label(bot_page,text='BoT costs: higher = looser matching.\nDefaults: primary 0.80 / weak 0.50 / tentative 0.70.\nIdentity, freshness and Nano background guards still apply.',
+                  foreground='#8cbbb8',wraplength=340).pack(anchor='w',pady=5)
         ttk.Label(settings,text='Nano shadow: display / logs only.\nGuarded: bounded visual continuity; real YOLO\nrenews identity. Search remains independently gated.',
                   foreground='#d9b56c',wraplength=285).grid(row=len(controls)+5,columnspan=2,sticky='w',pady=5)
         ttk.Button(right,text='Reset target / spacing',command=self.reset).pack(fill='x',pady=2)
@@ -360,13 +387,16 @@ class FollowLabWindow:
         self.notice=tk.StringVar(value='Enter the IP shown in MSDKRemote. Start its Video Server first.')
         ttk.Label(root,textvariable=self.notice,wraplength=1250,padding=10,foreground='#d9b56c').pack(side='bottom',fill='x',before=body)
         self.settings=Settings(**self.loaded_values)
-        for var in list(self.vars.values())+[self.hold,self.edge_search_on,self.search_auto,self.nano_mode,self.forward_require_nano,self.coordinated_turns,self.scan_observation_mode]: var.trace_add('write',self.mark_dirty)
+        for var in list(self.vars.values())+[self.hold,self.edge_search_on,self.search_auto,self.nano_mode,self.forward_require_nano,self.coordinated_turns,self.scan_observation_mode,self.gmc_resolution]: var.trace_add('write',self.mark_dirty)
+        self.mark_dirty()
         self.compute.trace_add('write',lambda *a:self.notice.set('Compute changes take effect on the next Connect.'))
         self.root.after(50,self.refresh)
 
     def read_settings(self):
         data=asdict(self.settings)
-        for key,var in self.vars.items(): data[key]=float(var.get())/(100 if key in self.percent else 1)
+        for key,var in self.vars.items():
+            data[key]=int(var.get()) if key=='gmc_max_corners' else float(var.get())/(100 if key in self.percent else 1)
+        data['gmc_resolution']=self.gmc_resolution.get()
         data['follow_and_hold']=self.hold.get()
         data['nano_mode']=self.nano_mode.get()
         data['forward_require_nano']=self.forward_require_nano.get()
@@ -689,6 +719,7 @@ class FollowLabWindow:
         # Keep authority across the flight toolbar so clicking Dance can run.
         def check():
             self.focus_check_id=None
+            if getattr(self,'hard_active',False):return
             if getattr(self,'closing',False): return
             focused=safe_focus_widget(self.root)
             if focused is self.canvas: return
@@ -746,6 +777,15 @@ class FollowLabWindow:
             self.notice.set('Settings saved. Target retained; control and spacing restarted. Waiting for a new measurement.')
         except Exception as exc: messagebox.showerror('Settings',str(exc))
 
+    def apply_gmc(self):
+        try:
+            updated=replace(self.settings,gmc_resolution=self.gmc_resolution.get(),
+                            gmc_max_corners=int(self.vars['gmc_max_corners'].get())).validate()
+            if self.session:self.session.configure(updated)
+            self.settings=updated;self.save_config();self.mark_dirty()
+            self.notice.set('GMC saved. Target retained; waiting for a fresh measurement. Other pending fields were not applied.')
+        except Exception as exc:messagebox.showerror('Camera motion settings',str(exc))
+
     def reset(self):
         if self.session: self.session.reset(); self.notice.set('Tracker reset. A new target can be acquired.')
 
@@ -778,6 +818,7 @@ class FollowLabWindow:
         return None
 
     def refresh(self):
+        if getattr(self,'hard_active',False):return
         refresh_started=time.monotonic()
         if getattr(self,'runtime',None):self.runtime.poll()
         if hasattr(self,'ui_timing'):
@@ -837,7 +878,8 @@ class FollowLabWindow:
                              f"Requested {search.get('requested_duration_seconds',self.settings.edge_search_seconds):g} s | both sides reached: {search.get('coverage_complete',False)}\n"
                              f"First search: { {-1:'LEFT',1:'RIGHT'}.get(search.get('first_scan_direction'),'--')}\n"
                              f"{search.get('reason','--')}\n{s.heading.status}")
-                result=s.result.get(); inference='--' if result is None else f"{result['inference_ms']:.1f} ms"
+                result=s.result.get();inference_ms=(result or {}).get('inference_ms')
+                inference='--' if inference_ms is None else f'{inference_ms:.1f} ms'
                 compute=s.model_info.get('compute',{}) if s.model_info else {}
                 compute_label=compute.get('label','loading')
                 model_shape=s.model_info.get('input',[]) if s.model_info else []
@@ -925,6 +967,11 @@ class FollowLabWindow:
         try: dirty=asdict(self.read_settings())!=asdict(self.settings)
         except Exception: dirty=True
         self.settings_note.set('Changes pending - press Apply' if dirty else 'Settings applied / saved')
+        if hasattr(self,'gmc_note'):
+            pending=(self.gmc_resolution.get()!=self.settings.gmc_resolution
+                     or self.vars['gmc_max_corners'].get()!=str(self.settings.gmc_max_corners))
+            self.gmc_note.set(f'Saved: {self.settings.gmc_resolution} / {self.settings.gmc_max_corners} points'
+                              + ('\nGMC changes pending - press Apply GMC' if pending else '\nApplies on the next fresh tracking frame.'))
 
     def capture_action(self):
         if getattr(self,'real_time',False):return
@@ -936,11 +983,42 @@ class FollowLabWindow:
             else: self.session.start_recording(self.capture_mode.get())
         except Exception as exc: messagebox.showerror('Recording',str(exc))
 
-    def toggle_real_time(self):
+    def start_hard(self):
+        if (not getattr(self,'runtime',None) or not self.session or not self.manual
+                or self.stopping or not self.manual.control_snapshot().get('active')):
+            self.notice.set('HARD requires process mode, connected video and enabled TCP control.');return
+        from .hard_console import WindowsConsole,run_hard
+        try:console=WindowsConsole()
+        except Exception as exc:self.notice.set(str(exc));return
+        self.clear_keyboard_input('hard_entry');self.hard_active=True
+        pending=getattr(self,'focus_check_id',None)
+        if pending:
+            self.root.after_cancel(pending);self.focus_check_id=None
+        print('REAL-TIME HARD: foreground console only. SPACE / Q / ESC stops Dance and returns to GUI.',flush=True)
+        def hide_gui():
+            self.root.withdraw();self.root.update_idletasks()
+        reason='Interrupted';confirmed=False
+        try:
+            # Keep our GUI foreground until the console takes focus. Withdrawing
+            # first can give another application focus and deny SetForegroundWindow.
+            reason,confirmed=run_hard(self.runtime,self.session.identity,self.manual.identity,
+                                      console,on_ready=hide_gui)
+        finally:
+            self.hard_active=False;self.root.deiconify();self.root.lift();self.canvas.focus_set()
+        self.dance_selected=False;self.dance_terminal_seen=False
+        self.runtime.poll();self.real_time=True;self.toggle_real_time(sync_runtime=False)
+        self.ui_tick=None;self.ui_timing=TimingWindow();self.rates.clear()
+        self.notice.set(('HARD stopped; control released. ' if confirmed else
+                        'HARD stopped; RELEASE UNCONFIRMED; use physical controller. ')+reason)
+        print(self.notice.get(),flush=True)
+        # The existing after callback was not executed while the console owned
+        # the main thread. It resumes now; no second refresh loop is created.
+
+    def toggle_real_time(self,*,sync_runtime=True):
         enabled=not self.real_time
-        if self.session:self.session.set_real_time(enabled)
+        if sync_runtime and self.session:self.session.set_real_time(enabled)
         self.real_time=enabled;self.runtime_ui_at=0.;self.rates.clear()
-        if self.manual:self.manual.detailed_logging=not enabled
+        if sync_runtime and self.manual:self.manual.detailed_logging=not enabled
         self.realtime_button.configure(text='Real-Time: ON' if enabled else 'Real-Time: OFF')
         self.capture_button.configure(state='disabled' if enabled else 'normal')
         self.raw_record_button.configure(state='disabled' if enabled else 'normal')

@@ -1,6 +1,7 @@
 import math
 import threading
 from collections import deque
+from . import activity
 
 
 class TimingWindow:
@@ -9,10 +10,12 @@ class TimingWindow:
         self.lock=threading.Lock();self.values={}
 
     def add(self,name,value):
+        if not activity.enabled:return
         if not math.isfinite(value) or value<0:return
         with self.lock:self.values.setdefault(name,deque(maxlen=240)).append(value)
 
     def snapshot(self):
+        if not activity.enabled:return {}
         with self.lock:
             values=self.values;self.values={}
         out={}

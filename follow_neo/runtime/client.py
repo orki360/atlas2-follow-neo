@@ -38,6 +38,7 @@ class RuntimeClient:
         self.sequence=itertools.count(1);self.pending={};self.pending_lock=threading.Lock()
         self.outgoing=queue.Queue(maxsize=32);self.last_snapshot=-1
         self.session=None;self.manual=None;self.closed=False;self.last_metrics=0.
+        self.minimum_snapshot_time=0.
 
     @property
     def alive(self):return bool(self.process and self.process.is_alive() and not self.error)
@@ -97,6 +98,8 @@ class RuntimeClient:
     def poll(self):
         if not self.process:return
         value,version=self.snapshots.get(self.last_snapshot)
+        if value and value['time']<self.minimum_snapshot_time:
+            self.last_snapshot=version;value=None
         if value:
             self.last_snapshot=version
             if self.session and value['session_id']==self.session.identity and value.get('session'):

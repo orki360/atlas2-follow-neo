@@ -5,6 +5,7 @@ No Ultralytics or torch dependency is needed at runtime.
 """
 
 from __future__ import annotations
+from follow_neo.diagnostics import activity
 
 import ast
 import time
@@ -277,21 +278,22 @@ class OnnxDroneDetector:
         return result
 
     def detect(self, frame: np.ndarray) -> dict[str, Any]:
-        started = time.perf_counter()
+        timing_token = activity.token()
+        started = activity.clock()
         tensor, transform = self._prepare(frame)
-        prepared = time.perf_counter()
+        prepared = activity.clock()
         outputs = self.session.run([o.name for o in self.outputs], {self.input.name: tensor})
         raw=outputs[0]
-        inferred = time.perf_counter()
+        inferred = activity.clock()
         detections = self.postprocess(raw, transform,outputs[1] if self.segmentation else None)
-        finished = time.perf_counter()
+        finished = activity.clock()
         return {
             "detections": detections,
             "input_size": [self.settings.input_width,self.settings.input_height],
             "input_transform": transform,
-            "preprocess_ms": (prepared - started) * 1000.0,
-            "inference_ms": (inferred - prepared) * 1000.0,
-            "postprocess_ms": (finished - inferred) * 1000.0,
-            "total_ms": (finished-started)*1000.0,
-            "providers": self.session.get_providers(),
+            "preprocess_ms": activity.duration_ms(timing_token, started, prepared),
+            "inference_ms": activity.duration_ms(timing_token, prepared, inferred),
+            "postprocess_ms": activity.duration_ms(timing_token, inferred, finished),
+            "total_ms": activity.duration_ms(timing_token, started, finished),
+            "providers": self.session.get_providers() if activity.enabled else None,
         }

@@ -75,12 +75,13 @@ class InputState:
     def __init__(self,ctx):
         self.latest=Mailbox(ctx,4096)
         self.fence=ctx.Value('q',0)
+        self.hard_abort=ctx.Event()
 
     def release(self):
         with self.fence.get_lock():
             self.fence.value+=1
             return self.fence.value
 
-    def pulse(self,keys,identity):
+    def pulse(self,keys,identity,origin='gui'):
         return self.latest.put(dict(time=time.monotonic(),keys=tuple(keys),identity=identity,
-                                    fence=self.fence.value))
+                                    fence=self.fence.value,origin=origin))

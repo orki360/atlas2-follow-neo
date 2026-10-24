@@ -1,5 +1,6 @@
 """Timestamp-based sampling. No frame queue and no invented camera FPS."""
 import math
+from follow_neo.diagnostics import activity
 
 
 class FrameRateGate:
@@ -34,11 +35,12 @@ class LatestFrameSampler:
 
     def offer(self,value,stamp):
         if not math.isfinite(stamp):raise ValueError('Invalid source time')
-        if self.pending is not None:self.replaced+=1
-        self.pending=(value,stamp);self.offered+=1
+        if activity.enabled and self.pending is not None:self.replaced+=1
+        self.pending=(value,stamp)
+        if activity.enabled:self.offered+=1
 
     def clear(self):
-        if self.pending is not None:self.invalidated+=1
+        if activity.enabled and self.pending is not None:self.invalidated+=1
         self.pending=None;self.next_due=None;self.fps=None
 
     def take(self,now,fps):
@@ -48,9 +50,12 @@ class LatestFrameSampler:
         if self.pending is None:return None
         value,source=self.pending
         if not 0<=now-source<=self.MAX_AGE_SECONDS:
-            self.pending=None;self.expired+=1;return None
+            self.pending=None
+            if activity.enabled:self.expired+=1
+            return None
         if self.next_due is not None and now+1e-7<self.next_due:return None
-        self.pending=None;self.selected+=1;self.last_selected_age_ms=(now-source)*1000
+        self.pending=None
+        if activity.enabled:self.selected+=1;self.last_selected_age_ms=(now-source)*1000
         period=1./fps
         # Preserve cadence through normal jitter, but never catch up a stall.
         due=now if self.next_due is None else self.next_due

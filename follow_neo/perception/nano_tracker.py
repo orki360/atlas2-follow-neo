@@ -3,6 +3,7 @@
 All image work occurs outside the ingress lock. No synthesized Detection enters
 BoT-SORT. Guarded authority is applied separately from visual tracking.
 """
+from follow_neo.diagnostics import activity
 from collections import deque
 from pathlib import Path
 import hashlib
@@ -276,7 +277,7 @@ class NanoWorker:
             self.pending=dict(anchor,epoch=self.epoch,arm=len(self.hits)>=2)
             info=dict(frame_id=f.frame_id,source_time=f.decoded_at,epoch=self.epoch,
                       identity=self.identity,strong_hits=len(self.hits),arm=self.pending['arm'])
-        self.emit('nano_anchor',info)
+        (activity.enabled and self.emit('nano_anchor',info))
         self.event.set()
 
     def veto(self, reason, now=None, expected_epoch=None, exit_context=None):
@@ -292,7 +293,7 @@ class NanoWorker:
             self.pending=None;self.hits=[];self.observation=None;self.semantic_time=None
             self.visual_history.clear()
             epoch=self.epoch
-        self.emit('nano_veto',dict(reason=reason,epoch=epoch,mode=self.mode,time=now));self.wake()
+        (activity.enabled and self.emit('nano_veto',dict(reason=reason,epoch=epoch,mode=self.mode,time=now)));self.wake()
 
     def snapshot(self, now=None, *, source_time=None, frame_id=None):
         now=self.clock() if now is None else now
@@ -302,7 +303,7 @@ class NanoWorker:
                           blocked=self.blocked,reason=self.reason,semantic_time=self.semantic_time,
                           updates=self.updates,skipped=self.skipped)
             result['exit_context']=dict(self.exit_context) if self.exit_context else None
-            stamps=list(self.update_times)
+            stamps=list(self.update_times) if activity.enabled else []
             history=list(self.visual_history) if source_time is not None else []
         # Only actual Nano updates enter this history; a YOLO initialization
         # box is never independent evidence. Bracket skipped frames narrowly.
@@ -382,9 +383,9 @@ class NanoWorker:
         if self.mode!='off':
             try:
                 tracker=self.factory()
-                self.emit('nano_ready',dict(backend='OpenCV CPU',mode=self.mode))
+                (activity.enabled and self.emit('nano_ready',dict(backend='OpenCV CPU',mode=self.mode)))
             except Exception as exc:
-                self.veto('nano_error');self.emit('nano_error',dict(error=str(exc),mode=self.mode))
+                self.veto('nano_error');(activity.enabled and self.emit('nano_error',dict(error=str(exc),mode=self.mode)))
         while not self.stop_event.is_set():
             self.event.wait(.05);self.event.clear()
             with self.lock:
@@ -395,6 +396,7 @@ class NanoWorker:
                 epoch=token;last_id=-1;last_time=None;history={};validator=AppearanceCheck();armed=False;low_scores=0
                 template=TemplateRefresh()
             try:
+                cycle_token=activity.token()
                 start=self.clock();cycle_start=time.perf_counter();replay=0;anchor_used=None;reinitialized=False
                 if pending is not None and pending['epoch']==token:
                     src=pending['frame'];det=pending['detection'];anchor_used=src.frame_id
@@ -402,9 +404,9 @@ class NanoWorker:
                     previous=historical_box(history,src)
                     # A contradicting YOLO box is not allowed to teleport Nano.
                     if previous is not None and overlap(previous,det['box'])<.15:
-                        self.emit('nano_visual_rejected',dict(reason='yolo_visual_disagreement',
+                        (activity.enabled and self.emit('nano_visual_rejected',dict(reason='yolo_visual_disagreement',
                             frame_id=src.frame_id,source_time=src.decoded_at,visual_box=previous,
-                            yolo_box=det['box'],epoch=token))
+                            yolo_box=det['box'],epoch=token)))
                         self.veto('yolo_visual_disagreement',expected_epoch=token);continue
                     agreement=overlap(previous,det['box']) if previous is not None else 0.
                     refresh_reason=template.reason(src,det,agreement,pending['arm'])
@@ -415,12 +417,12 @@ class NanoWorker:
                         with self.lock:
                             self.visual_history.clear()
                         if tracker is None:tracker=self.factory()
-                        ti=time.perf_counter()
+                        init_token=activity.token();ti=activity.clock()
                         tracker.init(src.image,xywh(det['box']))
                         template.applied(src,det)
-                        self.emit('nano_anchor_applied',dict(frame_id=src.frame_id,reinitialized=True,
-                            init_ms=(time.perf_counter()-ti)*1000,source_time=src.decoded_at,epoch=token,
-                            template_reason=refresh_reason or 'acquire_or_realign',anchor_iou=agreement))
+                        (activity.enabled and self.emit('nano_anchor_applied',dict(frame_id=src.frame_id,reinitialized=True,
+                            init_ms=activity.duration_ms(init_token,ti),source_time=src.decoded_at,epoch=token,
+                            template_reason=refresh_reason or 'acquire_or_realign',anchor_iou=agreement)))
                         last_id=src.frame_id;last_time=src.decoded_at;low_scores=0
                         validator.previous=src;validator.box=list(det['box'])
                         history={last_id:(last_time,list(det['box']))}
@@ -451,12 +453,13 @@ class NanoWorker:
                     midpoint=(last_time+candidates[-1].decoded_at)*.5
                     middle=min(candidates[:-1],key=lambda f:abs(f.decoded_at-midpoint))
                     work=[middle,candidates[-1]]
-                self.skipped+=max(0,len(candidates)-len(work))
+                if activity.enabled:self.skipped+=max(0,len(candidates)-len(work))
                 for frame in work:
                     if self.clock()-frame.decoded_at>DISPLAY_SECONDS:continue
                     if last_time is not None and frame.decoded_at-last_time>FRAME_GAP_SECONDS:
                         self.veto('visual_frame_gap',expected_epoch=token);break
-                    tu=time.perf_counter();ok,box=tracker.update(frame.image);update_ms=(time.perf_counter()-tu)*1000
+                    update_token=activity.token();tu=activity.clock();ok,box=tracker.update(frame.image)
+                    update_ms=activity.duration_ms(update_token,tu)
                     score=float(tracker.getTrackingScore())
                     low_scores=low_scores+1 if not np.isfinite(score) or score<.35 else 0
                     box=[float(box[0]),float(box[1]),float(box[0]+box[2]),float(box[1]+box[3])]
@@ -466,27 +469,30 @@ class NanoWorker:
                     history={i:b for i,b in history.items() if i>=last_id-30}
                     replay+=1;finished=self.clock()
                     if reason:
-                        self.emit('nano_visual_rejected',dict(reason=reason,frame_id=last_id,
+                        (activity.enabled and self.emit('nano_visual_rejected',dict(reason=reason,frame_id=last_id,
                             source_time=last_time,box=box,score=score if np.isfinite(score) else None,
-                            checks=metrics,epoch=token))
+                            checks=metrics,epoch=token)))
                         context=dict(time=last_time,box=box,frame_size=[frame.image.shape[1],frame.image.shape[0]],
                                      checks=dict(metrics)) if reason=='target_leaving_frame' else None
                         self.veto(reason,finished,token,exit_context=context);break
                     with self.lock:
                         if token!=self.epoch or generation!=self.generation:break
-                        self.updates+=1
                         self.observation=dict(box=box,frame_id=last_id,visual_time=last_time,completed_at=finished,
-                            score=score if np.isfinite(score) else None,update_ms=update_ms,cycle_ms=(time.perf_counter()-cycle_start)*1000,
+                            score=score if np.isfinite(score) else None,
                             replay_frames=replay,anchor_frame_id=anchor_used,checks=metrics)
-                        self.visual_history.append(dict(self.observation));self.update_times.append(finished)
+                        if activity.enabled:
+                            self.updates+=1;self.update_times.append(finished)
+                            self.observation.update(update_ms=update_ms,
+                                cycle_ms=activity.duration_ms(cycle_token,cycle_start))
+                        self.visual_history.append(dict(self.observation))
                         if armed:self.blocked=False;self.reason='visual_supported'
                     self.wake()
-                    if finished-self.last_log>=.1:
-                        self.emit('nano_observation',self.snapshot(finished));self.last_log=finished
+                    if activity.enabled and finished-self.last_log>=.1:
+                        (activity.enabled and self.emit('nano_observation',self.snapshot(finished)));self.last_log=finished
                     if time.perf_counter()-cycle_start>.045:break
             except Exception as exc:
                 self.veto('nano_error',expected_epoch=token)
-                self.emit('nano_error',dict(error=str(exc),mode=mode));tracker=None
+                (activity.enabled and self.emit('nano_error',dict(error=str(exc),mode=mode)));tracker=None
 
     def stop(self):
         self.stop_event.set();self.event.set()

@@ -10,6 +10,7 @@ import uuid
 import traceback
 import os
 from ..diagnostics.timing import TimingWindow
+from ..diagnostics import activity
 
 from follow_neo.shared.types import Settings, Box, Detection
 from follow_neo.capture.video import VideoReceiver, LatestValue
@@ -31,10 +32,12 @@ class SessionLog:
         self.path=Path(path); self.queue=queue.Queue(maxsize=512)
         self.real_time=bool(real_time);self.suppressed=0
         self.dropped=0; self.error=None
+        self.enabled=True;self.write_lock=threading.Lock()
         self.handle=self.path.open('w',encoding='utf-8')
         self.thread=threading.Thread(target=self._run,name='follow-log',daemon=True); self.thread.start()
 
     def write(self,event,data):
+        if not self.enabled:return
         if self.real_time and not keep_realtime_event(event,data):
             self.suppressed+=1;return
         row={'event':event,'wall_time':time.time(),'monotonic':time.monotonic(),**data}
@@ -46,10 +49,13 @@ class SessionLog:
             while True:
                 row=self.queue.get()
                 if row is None: break
+                if not self.enabled:continue
                 if self.real_time and not keep_realtime_event(row['event'],row):
                     self.suppressed+=1;continue
-                self.handle.write(json.dumps(row,ensure_ascii=False,allow_nan=False)+'\n')
-                self.handle.flush()
+                with self.write_lock:
+                    if self.enabled:
+                        self.handle.write(json.dumps(row,ensure_ascii=False,allow_nan=False)+'\n')
+                        self.handle.flush()
         except Exception as exc: self.error=str(exc)
         finally: self.handle.close()
 
@@ -59,12 +65,24 @@ class SessionLog:
             except queue.Full: return
             self.thread.join(timeout=3)
 
+    def suspend(self):
+        # Wait for the current write, then discard queued diagnostics without IO.
+        with self.write_lock:
+            self.enabled=False
+            while True:
+                try:self.queue.get_nowait()
+                except queue.Empty:break
+
+    def resume(self):
+        with self.write_lock:self.enabled=True
+
 
 class FollowSession:
     def __init__(self,root,host,codec='h264',settings=None,record_raw=False,compute_mode='Auto',device_id=-1,
                  model_name=DEFAULT_MODEL,recording_profile='Auto',real_time=False,architecture_mode='inline'):
         self.architecture_mode=architecture_mode;self.scheduling=TimingWindow();self.last_control_tick=None
         self.real_time=bool(real_time);self.runtime_sample=None;self.runtime_stats=RuntimeStats()
+        self.hard=False
         self.root=Path(root); self.settings=(settings or Settings()).validate()
         self.model_path,self.model_manifest=resolve_model(self.root,model_name)
         self.target_policy=target_policy(self.model_path.name)
@@ -88,7 +106,7 @@ class FollowSession:
         cv2.setNumThreads(1)
         self.nano=NanoWorker(self.root,self.settings.nano_mode,self.generation,
                              wake=self.control_wake.set,emit=self.log.write)
-        self.log.write('session_start',{'version':__version__,'host':host,'port':9999,
+        (activity.enabled and self.log.write('session_start',{'version':__version__,'host':host,'port':9999,
              'codec':codec,'compute_requested':compute_mode,'device_id':device_id,'settings':asdict(self.settings),
              'architecture_mode':architecture_mode,'runtime_pid':os.getpid(),
              'model':self.model_manifest,'recording_profile':recording_profile,'real_time':self.real_time,
@@ -96,7 +114,7 @@ class FollowSession:
              'tracking_motion':'botsort_with_separate_nano','nano_mode':self.settings.nano_mode,
              'opencv_threads':cv2.getNumThreads(),'tracking_revision':__revision__,'control_revision':__revision__,
              'flight_control':'explicit_manual_or_dance_enable_required',
-             'timestamp_origin':'local_decoder_monotonic_not_camera_exposure'})
+             'timestamp_origin':'local_decoder_monotonic_not_camera_exposure'}))
         raw_path=self.output/f'video.{codec}' if record_raw and not self.real_time else None
         self.receiver=VideoReceiver(host,codec=codec,raw_path=raw_path,on_event=self._video_event,
                                     on_frame=self._record_frame,processing_fps=self.settings.video_fps)
@@ -126,11 +144,12 @@ class FollowSession:
                 self.reset_event.set()
                 self.nano.reset(self.settings.nano_mode,self.generation)
             self.control_wake.set()
-            self.log.write('video_tracking_invalidated',dict(generation=self.generation,
-                stream_epoch=data['stream_epoch'],reason='video_stream_interrupted'))
-        self.log.write(event,data)
+            (activity.enabled and self.log.write('video_tracking_invalidated',dict(generation=self.generation,
+                stream_epoch=data['stream_epoch'],reason='video_stream_interrupted')))
+        (activity.enabled and self.log.write(event,data))
 
     def _runtime_health(self,data):
+        if self.hard:return
         now=time.monotonic();previous=self.runtime_sample
         current=(now,self.receiver.count,self.receiver.processed_count,self.inference_count)
         self.runtime_sample=current
@@ -140,7 +159,7 @@ class FollowSession:
         source=result.get('frame');measurement=decision.get('measurement_time')
         control=self.control_provider() if self.control_provider else {}
         transport=control.get('transport') or {}
-        self.log.write('runtime_health',dict(real_time=self.real_time,
+        (activity.enabled and self.log.write('runtime_health',dict(real_time=self.real_time,
             architecture_mode=self.architecture_mode,runtime_pid=os.getpid(),scheduling=self.scheduling.snapshot(),
             input_fps=rates[0],processed_fps=rates[1],inference_fps=rates[2],
             inference_ms=result.get('inference_ms'),
@@ -155,7 +174,7 @@ class FollowSession:
             command_statistics=self.runtime_stats.snapshot(),
             process_cpu_cores=data.get('pipeline',{}).get('process_cpu_cores'),
             log_dropped=self.log.dropped,log_suppressed=self.log.suppressed,
-            recording_finishing=bool(self.recorder and self.recorder.thread.is_alive())))
+            recording_finishing=bool(self.recorder and self.recorder.thread.is_alive()))))
 
     def set_real_time(self,enabled):
         enabled=bool(enabled)
@@ -171,24 +190,24 @@ class FollowSession:
         # Presentation mode is deliberately separate from configure()/reset().
         # Retain result, decision, identity, generation, deadlines and settings.
         self.runtime_sample=None
-        self.log.write('real_time_mode',dict(enabled=enabled,settings=asdict(self.settings),
-            generation=self.generation,recordings_resume_automatically=False))
+        (activity.enabled and self.log.write('real_time_mode',dict(enabled=enabled,settings=asdict(self.settings),
+            generation=self.generation,recordings_resume_automatically=False)))
 
     def record_control(self,event,data):
-        if event=='flight_command' and data.get('server_acknowledged'):
+        if not getattr(self,'hard',False) and event=='flight_command' and data.get('server_acknowledged'):
             self.flight_commands_sent+=1
             if data.get('command')=='rc' and hasattr(self,'runtime_stats'):
                 transition=self.runtime_stats.command(data,time.monotonic())
-                if self.real_time and transition:self.log.write('runtime_motion_transition',transition)
-        self.log.write(event,data)
+                if self.real_time and transition:(activity.enabled and self.log.write('runtime_motion_transition',transition))
+        (activity.enabled and self.log.write(event,data))
         if event in ('control_error','control_released','control_enabled','control_movement_paused','control_movement_resumed'):
             if event in ('control_movement_paused','control_movement_resumed') and data.get('preserve_tracking'):
-                self.log.write('control_context_preserved',dict(trigger=event,
+                (activity.enabled and self.log.write('control_context_preserved',dict(trigger=event,
                     pause_started=data.get('pause_started'),resume_measurement_after=data.get('resume_measurement_after'),
-                    generation=self.generation,commands_require_live_authority=True))
+                    generation=self.generation,commands_require_live_authority=True)))
                 self.control_wake.set()
             else:self.restart_control()
-        if event=='search_test_started':
+        if not getattr(self,'hard',False) and event=='search_test_started':
             if self.search_test_log:self.search_test_log.close()
             folder=self.output/('search_test_'+data['run_id']);folder.mkdir()
             self.search_test_log=SessionLog(folder/'events.jsonl',real_time=getattr(self,'real_time',False))
@@ -196,6 +215,25 @@ class FollowSession:
             self.search_test_log.write(event,data)
             if event=='search_test_summary':
                 self.search_test_log.close();self.search_test_log=None
+
+    def set_hard(self,enabled):
+        if enabled:
+            if self.model_info is None or self.model_error:raise RuntimeError('Wait for the model to be ready')
+            self.set_real_time(True)
+            if self.recorder:
+                self.recorder.thread.join(timeout=3.)
+                if self.recorder.thread.is_alive():raise RuntimeError('Recording is still finishing')
+            # The raw writer and queued JSON writer must be quiet before Dance.
+            self.receiver.finish_raw_recording()
+            self.log.suspend()
+            if self.search_test_log:self.search_test_log.suspend()
+            self.hard=True;activity.set_enabled(False)
+        else:
+            activity.set_enabled(True);self.hard=False
+            self.runtime_sample=None;self.last_control_tick=None
+            self.runtime_stats=RuntimeStats();self.scheduling=TimingWindow()
+            self.log.resume()
+            if self.search_test_log:self.search_test_log.resume()
 
     def with_control_status(self,decision):
         if not decision:return decision
@@ -225,14 +263,14 @@ class FollowSession:
         self.receiver.processing_fps=settings.video_fps
         self.nano.reset(settings.nano_mode,self.generation)
         self.restart_control()
-        self.log.write('settings',{'settings':asdict(settings),'tracking_reset':False,'control_reset':True})
+        (activity.enabled and self.log.write('settings',{'settings':asdict(settings),'tracking_reset':False,'control_reset':True}))
 
     def restart_control(self):
         self.decision.set(None)
         self.control_reset_event.set()
         if hasattr(self,'nano'):self.nano.reset(self.settings.nano_mode,self.generation)
         if hasattr(self,'control_wake'):self.control_wake.set()
-        self.log.write('control_restart_requested',{'tracking_reset':False})
+        (activity.enabled and self.log.write('control_restart_requested',{'tracking_reset':False}))
 
     def reset(self):
         with self.settings_lock: self.generation+=1
@@ -246,21 +284,21 @@ class FollowSession:
                 edge_search_seconds=float(seconds),edge_search_enabled=bool(enabled),
                 search_auto_duration=self.settings.search_auto_duration if auto_duration is None else bool(auto_duration)).validate()
             saved=asdict(self.settings)
-        self.log.write('search_settings',{'settings':saved,'tracking_reset':False,
-            'active_arc_policy':'existing arc keeps its original budget; zero/disabled cancels'})
+        (activity.enabled and self.log.write('search_settings',{'settings':saved,'tracking_reset':False,
+            'active_arc_policy':'existing arc keeps its original budget; zero/disabled cancels'}))
 
     def start_recording(self,mode):
         if getattr(self,'real_time',False):raise RuntimeError('Turn Real-Time OFF before recording.')
         if self.receiver.state!='STREAMING': raise RuntimeError('Connect and wait for live video first.')
         with self.recorder_lock:
             if self.recorder and self.recorder.thread.is_alive(): raise RuntimeError('Wait for the previous recording to finish.')
-            if self.recorder: self.log.write('recording_end',self.recorder.status())
+            if self.recorder: (activity.enabled and self.log.write('recording_end',self.recorder.status()))
             self.recorder=VideoRecorder(self.output,mode,profile=self.recording_profile,on_event=self.log.write)
-        self.log.write('recording_start',self.recorder.status())
+        (activity.enabled and self.log.write('recording_start',self.recorder.status()))
 
     def stop_recording(self):
         with self.recorder_lock:
-            if self.recorder: self.recorder.stop(); self.log.write('recording_stop_requested',self.recorder.status())
+            if self.recorder: self.recorder.stop(); (activity.enabled and self.log.write('recording_stop_requested',self.recorder.status()))
 
     def _record_frame(self,frame):
         self.nano.submit_frame(frame)
@@ -288,13 +326,13 @@ class FollowSession:
             self.target_policy=target_policy(self.model_path.name,source_names if isinstance(source_names,dict) else None)
             self.model_info.update(model_class_names=source_names if isinstance(source_names,dict) else None,
                                    target_policy=self.target_policy)
-            self.log.write('model_ready',self.model_info)
+            (activity.enabled and self.log.write('model_ready',self.model_info))
             last_id=0;frame_version=0;sampler=FrameRateGate()
             while not self.stop_event.is_set():
                 frame,new_version=self.receiver.frames.wait_next(frame_version,.10)
                 if self.stop_event.is_set():break
                 if new_version==frame_version or frame is None:continue
-                self.inference_skips+=max(0,new_version-frame_version-1)
+                if activity.enabled:self.inference_skips+=max(0,new_version-frame_version-1)
                 frame_version=new_version
                 with self.settings_lock: settings=self.settings; generation=self.generation
                 if frame.stream_epoch!=self.receiver.stream_epoch:continue
@@ -308,15 +346,15 @@ class FollowSession:
                                           iou_threshold=settings.nms_iou)
                 inference_started=time.monotonic()
                 result=detector.detect(frame.image)
-                self.scheduling.add('inference_cycle_ms',(time.monotonic()-inference_started)*1000)
+                (activity.enabled and self.scheduling.add('inference_cycle_ms',(time.monotonic()-inference_started)*1000))
                 result.update(frame=frame,completed_at=time.monotonic(),generation=generation,
                               inference_started_at=inference_started)
                 with self.settings_lock:
                     if generation==self.generation:
                         self.result.set(result);self.control_wake.set()
-                self.inference_count+=1
+                if activity.enabled:self.inference_count+=1
         except Exception as exc:
-            self.model_error=str(exc); self.log.write('inference_error',{'error':str(exc)})
+            self.model_error=str(exc); (activity.enabled and self.log.write('inference_error',{'error':str(exc)}))
 
     def _control(self):
         last_id=0; last_state=None; last_log=0.;result_version=0
@@ -333,8 +371,8 @@ class FollowSession:
                 self.control_wake.wait(1/60);self.control_wake.clear()
                 if self.stop_event.is_set():break
                 now=time.monotonic();cycle_started=now
-                if self.last_control_tick is not None:self.scheduling.add('control_tick_gap_ms',(now-self.last_control_tick)*1000)
-                self.last_control_tick=now
+                if self.last_control_tick is not None:(activity.enabled and self.scheduling.add('control_tick_gap_ms',(now-self.last_control_tick)*1000))
+                if activity.enabled:self.last_control_tick=now
                 with self.settings_lock:
                     settings=self.settings;generation=self.generation
                     if self.reset_event.is_set():
@@ -342,10 +380,10 @@ class FollowSession:
                         self.control_reset_event.clear()
                         previous=self.result.get(); last_id=previous['frame'].frame_id if previous else 0
                         self.analysis.set(None); self.decision.set(None)
-                        self.log.write('tracking_reset',{'reason':'reset_requested','generation':generation})
+                        (activity.enabled and self.log.write('tracking_reset',{'reason':'reset_requested','generation':generation}))
                     elif self.control_reset_event.is_set():
                         controller.restart_control();self.control_reset_event.clear()
-                        self.log.write('control_restart',{'tracking_reset':False})
+                        (activity.enabled and self.log.write('control_restart',{'tracking_reset':False}))
                 frame=self.receiver.frames.get(); result=self.result.get(); fresh_result=False
                 if frame is None or frame.stream_epoch!=self.receiver.stream_epoch:
                     self.stop_event.wait(.02); continue
@@ -368,8 +406,8 @@ class FollowSession:
                     controller.observe(detections,src.decoded_at,tracker_started,src.frame_id,
                                        (src.image.shape[1],src.image.shape[0]),settings,image=src.image,
                                        continuity=proof,allow_search_cues=dance_context)
-                    if proof:self.log.write('yolo_visual_continuity',dict(proof,
-                        accepted=not controller.rejected,association_reason=controller.tracker.association_reason))
+                    if proof:(activity.enabled and self.log.write('yolo_visual_continuity',dict(proof,
+                        accepted=not controller.rejected,association_reason=controller.tracker.association_reason)))
                     anchor=strong_anchor(controller,result,settings)
                     if anchor is not None:self.nano.submit_anchor(anchor)
                     else:
@@ -379,16 +417,16 @@ class FollowSession:
                         if box and any(d.get('class_id')==1 and d['confidence']>=settings.confidence
                                        and overlap(box,d['box'])>.5 for d in result['detections']):
                             self.nano.veto('competing_mini_detection')
-                    tracker_ms=(time.monotonic()-tracker_started)*1000
+                    if activity.enabled:tracker_ms=(time.monotonic()-tracker_started)*1000
                     fresh_result=True
                 authority=self.control_provider() if self.control_provider else {}
                 heading,now=heading_snapshot(self.heading)
-                tick_started=time.monotonic()
+                tick_token=activity.token();tick_started=activity.clock()
                 visual=self.nano.snapshot(now,source_time=controller.tracker.measurement_time,
                                           frame_id=controller.tracker.measurement_id)
                 decision=controller.tick(now,w,h,frame.decoded_at if self.receiver.state=='STREAMING' else None,
                                          settings,heading,control_available=dance_context,visual=visual,generation=generation)
-                tick_ms=(time.monotonic()-tick_started)*1000
+                tick_ms=activity.duration_ms(tick_token,tick_started)
                 decision['control_status']=authority
                 decision['target_policy']=self.target_policy
                 decision['generation']=generation
@@ -403,26 +441,26 @@ class FollowSession:
                 # timestamp. Recording must not query control from capture.
                 decision['control_status']=authority
                 self.decision.set(decision)
-                self.scheduling.add('control_work_ms',(time.monotonic()-cycle_started)*1000)
-                if tracker_ms is not None:self.scheduling.add('tracker_ms',tracker_ms)
+                (activity.enabled and self.scheduling.add('control_work_ms',(time.monotonic()-cycle_started)*1000))
+                if tracker_ms is not None:(activity.enabled and self.scheduling.add('tracker_ms',tracker_ms))
                 if decision.get('measurement_time') is not None:
-                    self.scheduling.add('measurement_age_at_decision_ms',(time.monotonic()-decision['measurement_time'])*1000)
-                transition=self.runtime_stats.tracking(decision,now)
-                if self.real_time and transition:self.log.write('runtime_tracking_transition',transition)
-                observation_log.update(decision.get('edge_search') or {},now,self.log.write)
+                    (activity.enabled and self.scheduling.add('measurement_age_at_decision_ms',(time.monotonic()-decision['measurement_time'])*1000))
+                transition=self.runtime_stats.tracking(decision,now) if not self.hard else None
+                if self.real_time and transition:(activity.enabled and self.log.write('runtime_tracking_transition',transition))
+                if not self.hard:observation_log.update(decision.get('edge_search') or {},now,self.log.write)
                 if fresh_result:
                     if not self.real_time:
                         report=controller.tracker.association_report()
                         evaluated=controller.tracker.last_result_id==result['frame'].frame_id
                         if not evaluated:
                             report=dict(accepted=False,stages=[],association_reason='result_rejected_before_association')
-                        self.log.write('botsort_association',dict(report,generation=generation,evaluated=evaluated,
-                            result_frame_id=result['frame'].frame_id,result_source_time=result['frame'].decoded_at))
+                        (activity.enabled and self.log.write('botsort_association',dict(report,generation=generation,evaluated=evaluated,
+                            result_frame_id=result['frame'].frame_id,result_source_time=result['frame'].decoded_at)))
                     chosen=controller.tracker.accepted
                     identity_event=decision.get('tracking',{}).get('identity_event')
-                    if identity_event:self.log.write('target_reassociated',identity_event)
+                    if identity_event:(activity.enabled and self.log.write('target_reassociated',identity_event))
                     numerical_event=decision.get('tracking',{}).get('numerical_event')
-                    if numerical_event:self.log.write('tracking_numerical_reset',numerical_event)
+                    if numerical_event:(activity.enabled and self.log.write('tracking_numerical_reset',numerical_event))
                     if not self.real_time:
                         self.analysis.set({'result':result,'selected_box':None if chosen is None or controller.rejected else asdict(chosen.box),
                                            'selected_class_id':decision['selected_class_id'],'decision':decision})
@@ -448,10 +486,10 @@ class FollowSession:
                             tracker_ms=tracker_ms,control_tick_ms=tick_ms,
                             source_to_decision_ms=max(0.,now-result['frame'].decoded_at)*1000),
                           result_to_control_ms=max(0.,now-result['completed_at'])*1000)
-                    self.log.write('observation',payload); last_log=now
+                    (activity.enabled and self.log.write('observation',payload)); last_log=now
                 last_state=key
         except Exception as exc:
-            self.model_error=str(exc); self.log.write('controller_error',{'error':str(exc),'traceback':traceback.format_exc()})
+            self.model_error=str(exc); (activity.enabled and self.log.write('controller_error',{'error':str(exc),'traceback':traceback.format_exc()}))
             self.decision.set({'state':'ERROR','reason':str(exc),'stale':True,'track_box':None,
                               'intent':{'yaw':0.,'vertical':0.,'roll':0.,'forward':0.},'command_sent':False})
 
@@ -462,11 +500,11 @@ class FollowSession:
             if thread.ident: thread.join()
         with self.recorder_lock: recorder=self.recorder
         if recorder:
-            recorder.wait(); self.log.write('recording_end',recorder.status())
-        self.log.write('session_end',{'decoded_frames':self.receiver.count,'inferences':self.inference_count,
+            recorder.wait(); (activity.enabled and self.log.write('recording_end',recorder.status()))
+        (activity.enabled and self.log.write('session_end',{'decoded_frames':self.receiver.count,'inferences':self.inference_count,
                                      'processed_frames':self.receiver.processed_count,'sampled_out_frames':self.receiver.sampled_out,
                                      'log_dropped':self.log.dropped,'flight_commands_sent':self.flight_commands_sent,
                                      'real_time':self.real_time,'log_suppressed':self.log.suppressed,
-                                     'final_command_statistics':self.runtime_stats.snapshot()})
+                                     'final_command_statistics':self.runtime_stats.snapshot()}))
         self.log.close()
         if self.search_test_log:self.search_test_log.close();self.search_test_log=None

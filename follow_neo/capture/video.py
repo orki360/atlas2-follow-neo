@@ -10,6 +10,7 @@ import time
 import av
 from follow_neo.capture.cadence import LatestFrameSampler
 from follow_neo.capture.video_diagnostics import VideoDiagnostics
+from follow_neo.diagnostics import activity
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,8 @@ class LatestValue:
 class VideoReceiver:
     def __init__(self,host,port=9999,codec='h264',raw_path=None,on_event=None,on_frame=None,processing_fps=30.):
         self.raw_recording_enabled=True
+        self.raw_lock=threading.Lock()
+        self.raw_handle=None
         if int(port)!=9999:
             raise ValueError('This iteration accepts only the original video port 9999.')
         self.host=host; self.port=int(port); self.codec=codec; self.raw_path=raw_path
@@ -58,6 +61,7 @@ class VideoReceiver:
             last_receive_at=None,last_receive_wait_ms=None,last_decode_batch_ms=None,last_publish_ms=None)
 
     def timing_snapshot(self,now=None):
+        if not activity.enabled:return {}
         now=time.monotonic() if now is None else now
         timing=dict(self.timing);received=timing['last_receive_at']
         with self.sample_condition:sampling=self.sampler.snapshot()
@@ -68,9 +72,16 @@ class VideoReceiver:
             timestamp_origin='local_decoder_monotonic_not_camera_exposure')
         return timing
 
+    def finish_raw_recording(self):
+        """Barrier: finish buffered disk writes before HARD is allowed to start."""
+        with self.raw_lock:
+            self.raw_recording_enabled=False
+            if self.raw_handle and not self.raw_handle.closed:self.raw_handle.close()
+            self.raw_handle=None
+
     def _publish_decoded(self,decoded,stamp):
         previous=self.last_frame_at
-        if previous is not None:
+        if activity.enabled and previous is not None:
             gap=max(0.,stamp-previous)*1000
             timing=dict(self.timing);timing.update(last_decode_gap_ms=gap,
                 max_decode_gap_ms=max(timing['max_decode_gap_ms'],gap),
@@ -91,7 +102,7 @@ class VideoReceiver:
         # Only one decoded frame is retained; conversion is outside recv/decode.
         with self.sample_condition:
             self.sampler.offer((decoded,self.count,stamp,self.stream_epoch),stamp)
-            self.sampled_out=self.sampler.replaced+self.sampler.expired+self.sampler.invalidated
+            if activity.enabled:self.sampled_out=self.sampler.replaced+self.sampler.expired+self.sampler.invalidated
             self.sample_condition.notify_all()
 
     def _publish_pending(self,now=None):
@@ -100,7 +111,7 @@ class VideoReceiver:
             # to come from the future because this worker was descheduled.
             now=time.monotonic() if now is None else now
             item=self.sampler.take(now,self.processing_fps)
-            self.sampled_out=self.sampler.replaced+self.sampler.expired+self.sampler.invalidated
+            if activity.enabled:self.sampled_out=self.sampler.replaced+self.sampler.expired+self.sampler.invalidated
         if item is None:return False
         decoded,frame_id,stamp,epoch=item
         with self.diagnostics.measure('convert_bgr'):
@@ -111,10 +122,10 @@ class VideoReceiver:
             if (self.stop_event.is_set() or epoch!=self.stream_epoch or self.state!='STREAMING'
                     or not 0<=age<=self.sampler.MAX_AGE_SECONDS):
                 self.diagnostics.count('publication_discarded');return False
-            self.processed_count+=1
+            if activity.enabled:self.processed_count+=1
             with self.diagnostics.measure('publish_callback'):
                 self.frames.set(frame);self.on_frame(frame)
-            self.timing=dict(self.timing,last_publish_ms=max(0.,time.monotonic()-stamp)*1000)
+            if activity.enabled:self.timing=dict(self.timing,last_publish_ms=max(0.,time.monotonic()-stamp)*1000)
         return True
 
     def _publish_loop(self):
@@ -140,6 +151,7 @@ class VideoReceiver:
         self.monitor_thread.start()
 
     def _health(self,reason):
+        if not activity.enabled:return
         self.on_event('video_health',dict(reason=reason,state=self.state,error=self.error,
             total_bytes=self.bytes,total_decoded=self.count,total_processed=self.processed_count,
             timing=self.timing_snapshot(),pipeline=self.diagnostics.snapshot(reset=True)))
@@ -153,7 +165,9 @@ class VideoReceiver:
     def _run(self):
         recording=None; self.started_at=time.monotonic(); self.state='CONNECTING'
         try:
-            if self.raw_path and self.raw_recording_enabled: recording=open(self.raw_path,'wb')
+            with self.raw_lock:
+                if self.raw_path and self.raw_recording_enabled:
+                    recording=open(self.raw_path,'wb');self.raw_handle=recording
             while not self.stop_event.is_set():
                 try:
                     self._receive_stream(recording)
@@ -177,7 +191,9 @@ class VideoReceiver:
             if not self.stop_event.is_set():
                 self._invalidate_stream(exc)
         finally:
-            if recording: recording.close()
+            with self.raw_lock:
+                if recording and not recording.closed:recording.close()
+                self.raw_handle=None
             if self.sock:
                 try: self.sock.close()
                 except OSError: pass
@@ -213,8 +229,10 @@ class VideoReceiver:
         while not self.stop_event.is_set():
             # Close on the receive worker, never wait for disk I/O in the UI.
             # Once stopped, raw recording cannot resume in this connection.
-            if recording and not self.raw_recording_enabled:
-                recording.close();recording=None
+            with self.raw_lock:
+                if recording and not self.raw_recording_enabled:
+                    if not recording.closed:recording.close()
+                    recording=None;self.raw_handle=None
             receive_started=time.monotonic()
             try:
                 with self.diagnostics.measure('receive'):data=self.sock.recv(262144)
@@ -224,12 +242,14 @@ class VideoReceiver:
                 if time.monotonic()-last_decoded>8:raise TimeoutError('No decoded frame for 8 seconds. Check H264/H265 selection.')
                 continue
             if not data:raise ConnectionError('Phone closed the video connection.')
-            last_bytes=time.monotonic();self.bytes+=len(data)
+            last_bytes=time.monotonic()
+            if activity.enabled:self.bytes+=len(data)
             self.diagnostics.received(len(data),last_bytes)
-            self.timing=dict(self.timing,last_receive_at=last_bytes,
+            if activity.enabled:self.timing=dict(self.timing,last_receive_at=last_bytes,
                 last_receive_wait_ms=max(0.,last_bytes-receive_started)*1000)
-            if recording and self.raw_recording_enabled:
-                with self.diagnostics.measure('raw_record_write'):recording.write(data)
+            with self.raw_lock:
+                if recording and self.raw_recording_enabled:
+                    with self.diagnostics.measure('raw_record_write'):recording.write(data)
             with self.diagnostics.measure('parse'):packets=codec.parse(data)
             self.diagnostics.count('packets',len(packets))
             for packet in packets:
@@ -241,7 +261,7 @@ class VideoReceiver:
                 for decoded in frames:
                     last_decoded=time.monotonic()
                     self._publish_decoded(decoded,last_decoded)
-            self.timing=dict(self.timing,last_decode_batch_ms=max(0.,time.monotonic()-last_bytes)*1000)
+            if activity.enabled:self.timing=dict(self.timing,last_decode_batch_ms=max(0.,time.monotonic()-last_bytes)*1000)
             if time.monotonic()-last_decoded>8:
                 raise TimeoutError('Bytes received but no decoded frames. Check codec selection.')
 

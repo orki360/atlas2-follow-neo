@@ -3,6 +3,7 @@ from contextlib import contextmanager
 import os
 import threading
 import time
+from follow_neo.diagnostics import activity
 
 
 class VideoDiagnostics:
@@ -26,22 +27,26 @@ class VideoDiagnostics:
             self.active_stages[worker]=(threading.current_thread().name,phase,started)
         try:yield
         finally:
-            elapsed=max(0.,time.monotonic()-started)*1000
-            cpu_ms=max(0.,time.thread_time()-cpu)*1000
-            with self.lock:
-                value=self.stages.setdefault(phase,dict(count=0,total_ms=0.,max_ms=0.,cpu_ms=0.))
-                value['count']+=1;value['total_ms']+=elapsed
-                value['max_ms']=max(value['max_ms'],elapsed);value['cpu_ms']+=cpu_ms
-                self.active_stages.pop(worker,None)
-                if self.active_stages:
-                    _,self.phase,self.phase_since=max(self.active_stages.values(),key=lambda v:v[2])
-                else:self.phase='idle';self.phase_since=time.monotonic()
+            if self.enabled and activity.enabled:
+                elapsed=max(0.,time.monotonic()-started)*1000
+                cpu_ms=max(0.,time.thread_time()-cpu)*1000
+                with self.lock:
+                    value=self.stages.setdefault(phase,dict(count=0,total_ms=0.,max_ms=0.,cpu_ms=0.))
+                    value['count']+=1;value['total_ms']+=elapsed
+                    value['max_ms']=max(value['max_ms'],elapsed);value['cpu_ms']+=cpu_ms
+                    self.active_stages.pop(worker,None)
+                    if self.active_stages:
+                        _,self.phase,self.phase_since=max(self.active_stages.values(),key=lambda v:v[2])
+                    else:self.phase='idle';self.phase_since=time.monotonic()
+            else:
+                with self.lock:self.active_stages.pop(worker,None)
 
     def count(self,name,value=1):
         if not self.enabled:return
         with self.lock:self.counters[name]=self.counters.get(name,0)+value
 
     def connected(self,now):
+        if not activity.enabled:return
         with self.lock:
             self.connection_started=now;self.last_bytes=None;self.last_keyframe=None
 
@@ -63,6 +68,7 @@ class VideoDiagnostics:
                 self.last_keyframe=now;self.counters['keyframes']=self.counters.get('keyframes',0)+1
 
     def snapshot(self,reset=False):
+        if not activity.enabled:return {}
         now=time.monotonic();cpu=time.process_time()
         with self.lock:
             elapsed=max(0.,now-self.since)

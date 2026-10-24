@@ -17,7 +17,8 @@ with tempfile.TemporaryDirectory() as folder:
     try:
         window=FollowLabWindow(root,Path(folder))
         root.update_idletasks()
-        assert VERSION=='14.1.1'
+        assert VERSION=='16.0.3'
+        assert window.hard_button.cget('text')=='REAL-TIME HARD'
         assert root.title()==f'ATLAS2 Follow NEO | Version {VERSION} / {REVISION} - BoT-SORT'
         assert window.version_label.cget('text')=='v'+VERSION
         assert window.revision_label.cget('text')==REVISION
@@ -34,6 +35,20 @@ with tempfile.TemporaryDirectory() as folder:
         assert window.tabs.select()==str(window.diagram_tab)
         assert window.search_auto.get() is True
         assert window.nano_mode.get()==Settings().nano_mode
+        assert window.tabs.tab(window.botsort_tab,'text')=='BoT-SORT'
+        assert window.gmc_resolution.get()=='480x270'
+        assert window.vars['gmc_max_corners'].get()=='400'
+        assert tuple(window.gmc_resolution_picker.cget('values'))==('480x270','640x360','960x540','1280x720','1920x1080')
+        before_gmc=window.settings
+        window.vars['confidence'].set('0.65')
+        window.gmc_resolution.set('480x270');window.vars['gmc_max_corners'].set('300')
+        window.apply_gmc()
+        restored=settings_from_config(json.loads(window.config_path.read_text()))
+        assert restored.gmc_resolution=='480x270' and restored.gmc_max_corners==300
+        assert restored.confidence==before_gmc.confidence
+        assert 'Changes pending' in window.settings_note.get()
+        window.vars['confidence'].set(str(before_gmc.confidence))
+        window.gmc_resolution.set('640x360');window.vars['gmc_max_corners'].set('400');window.apply_gmc()
         for key,value in (('botsort_match_threshold',.85),('botsort_low_match_threshold',.55),
                           ('botsort_unconfirmed_match_threshold',.75)):
             assert key in window.vars

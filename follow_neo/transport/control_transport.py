@@ -8,6 +8,7 @@ import time
 from collections import deque
 import math
 import secrets
+from follow_neo.diagnostics import activity
 from dataclasses import dataclass
 from follow_neo.transport.socket_options import enable_nodelay
 
@@ -62,7 +63,7 @@ class ControlChannel:
     def diagnostics(self, now=None):
         """Local send-to-reply timings, independent of motion authorization."""
         now=time.monotonic() if now is None else now
-        samples=sorted(self.rc_ack_samples)
+        samples=sorted(self.rc_ack_samples) if activity.enabled else []
         return dict(last_ack=dict(self.last_ack) if self.last_ack else None,
             tcp_nodelay=self.tcp_nodelay, acknowledgement_scope='android_handler_not_aircraft_motion',
             ack_count=self.ack_count,late_rc_ack_count=self.late_rc_ack_count,
@@ -88,7 +89,8 @@ class ControlChannel:
         if neutral:
             self.neutral_sent = True
             self.neutral_acknowledged = False
-        self.emit('control_command_attempt', dict(sequence=self.sequence, command=value, sent_at=stamp))
+        if activity.enabled or not value.startswith('rc '):
+            self.emit('control_command_attempt', dict(sequence=self.sequence, command=value, sent_at=stamp))
         self.sock.settimeout(.10)
         try:
             self.sock.sendall((value+'\r\n').encode('ascii'))
@@ -203,10 +205,11 @@ class ControlChannel:
                 received_at=received,ack_ms=ack_ms,neutral=neutral,
                 timeout_ms=(RC_ACK_TIMEOUT if rc else 2.)*1000,
                 late=ack_ms>(RC_ACK_TIMEOUT if rc else 2.)*1000)
-            self.ack_count+=1
-            if rc:
+            if activity.enabled:self.ack_count+=1
+            if rc and activity.enabled:
                 self.rc_ack_samples.append(ack_ms);self.late_rc_ack_count+=int(self.last_ack['late'])
-            self.emit('control_command_ack',dict(self.last_ack,pending_after_reply=len(self.outstanding)))
+            if activity.enabled or not rc:
+                self.emit('control_command_ack',dict(self.last_ack,pending_after_reply=len(self.outstanding)))
             if reply != 'success':
                 self.rejected = True
                 # Bytes already received cannot acknowledge the neutral which

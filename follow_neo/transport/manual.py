@@ -3,6 +3,7 @@ import socket
 import threading
 import time
 import math
+from follow_neo.diagnostics import activity
 from follow_neo.control.dance import dance_command, DanceSmoother, SearchSmoother
 from follow_neo.control.edge_search import yaw_override
 from follow_neo.transport.control_transport import ControlChannel, VISUAL_CHANGE, MotionReduction, UNEXPECTED_REPLY
@@ -59,6 +60,7 @@ class ManualControl:
         self.pause_started = None
         self.preserve_tracking = False
         self.resume_measurement_after = None
+        self.release_acknowledged=threading.Event()
         self.input_keys = set()
         self.blocked_keys = set()
         self.connected = False
@@ -128,6 +130,7 @@ class ManualControl:
         self.on_event('control_mode', {'mode': 'MANUAL'})
 
     def enable(self):
+        self.release_acknowledged.clear()
         with self.lock:
             if self.communication_paused:self.keys.clear()
             self.action = None
@@ -271,7 +274,7 @@ class ManualControl:
                         resume_after=self.resume_measurement_after)
                     reason=status['reason']
                     key=(reason,status['renewed'],status['from_authority'],status['to_authority'])
-                    if (reason or status['renewed']) and key!=pending_log_key:
+                    if activity.enabled and (reason or status['renewed']) and key!=pending_log_key:
                         pending_log_key=key
                         self.on_event('control_pending_motion',dict(status,wire_values=list(values),
                             measurement_time=decision.get('measurement_time') if decision else None,
@@ -288,7 +291,10 @@ class ManualControl:
             sock = self.connector((self.host, 9998), timeout=2.)
             self.connected = True
             def transport_event(event,data):
-                with self.lock:self.transport_status=channel.diagnostics()
+                if event=='control_command_ack' and data.get('command')=='disable' and data.get('reply')=='success':
+                    self.release_acknowledged.set()
+                if activity.enabled:
+                    with self.lock:self.transport_status=channel.diagnostics()
                 self.on_event(event,data)
             channel = ControlChannel(sock,guard,transport_event)
             def resync_allowed():
@@ -572,7 +578,7 @@ class ManualControl:
                         continue  # Re-read current keys; never replay the superseded command.
                     self.last_acknowledged=dict(time=time.monotonic(),mode=mode,values=list(values),reason=gate_reason,
                         ack_ms=channel.last_ack['ack_ms'] if channel.last_ack else None)
-                    if self.detailed_logging:
+                    if self.detailed_logging and activity.enabled:
                         self.on_event('flight_command', {'mode': mode, 'command': 'rc',
                             'selected_mode': selected_mode,
                             'target_policy':decision.get('target_policy') if decision else None,
@@ -589,6 +595,8 @@ class ManualControl:
                             'real_neo_evidence':decision.get('real_neo_evidence') if decision else None,
                             'recovery_anchor':decision.get('recovery_anchor') if decision else None,
                             'recovery_motion':decision.get('recovery_motion') if decision else None,
+                            'curve_anchor':decision.get('curve_anchor') if decision else None,
+                            'curve_motion':decision.get('curve_motion') if decision else None,
                             'motion_settings':decision.get('motion_settings') if decision else None,
                             'transport':channel.diagnostics(),
                             'measurement_id':decision.get('measurement_id') if decision else None,
@@ -624,7 +632,7 @@ class ManualControl:
                             'android_quantized_to_zero': [axis for axis,value in zip(AXES,values)
                                 if value and math.trunc(value*660.)==0],
                             'measurement_id': decision.get('measurement_id') if mode == 'DANCE' and decision else None})
-                    else:
+                    elif activity.enabled:
                         # Keep command counts/transitions without building the
                         # diagnostic tracking tree. TCP/ACK handling is identical.
                         self.on_event('flight_command', dict(mode=mode,command='rc',

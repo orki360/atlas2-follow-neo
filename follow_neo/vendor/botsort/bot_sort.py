@@ -224,6 +224,8 @@ class BoTSORT(object):
 
     def _associate(self, stage, costs, tracks, detections, threshold):
         result = matching.linear_assignment(costs, thresh=threshold)
+        from follow_neo.diagnostics import activity
+        if not activity.enabled:return result
         matches, unmatched_tracks, unmatched_detections = result
         assigned = {int(i):int(j) for i,j in matches}
         # Inspect the selected target first, then a bounded sample of other IDs.

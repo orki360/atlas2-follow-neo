@@ -1,4 +1,5 @@
 """One BoT motion estimate; persistent logical identity and measured recovery."""
+from follow_neo.diagnostics import activity
 import math
 import time
 from collections import deque
@@ -7,6 +8,7 @@ import numpy as np
 from follow_neo.shared.types import Box, Detection, Kinematics
 from follow_neo.perception.camera_motion import CameraMotion
 from follow_neo.perception.prediction import project_center
+from follow_neo.shared.gmc import GMC_DEFAULT_RESOLUTION, GMC_DEFAULT_CORNERS, validate_gmc
 
 RECOVERY_SECONDS = 3.0
 # Source timestamps, not UI ticks. The recorded 11 Hz stream has legitimate
@@ -23,6 +25,7 @@ class BoTSORTTracker:
 
     def __init__(self, frame_size=(640,480)):
         self.frame_size=frame_size
+        self.gmc_settings=(GMC_DEFAULT_RESOLUTION,GMC_DEFAULT_CORNERS)
         self.scale=np.array([frame_size[0]/640,frame_size[1]/480]*2,np.float64)
         self.reset()
 
@@ -225,7 +228,11 @@ class BoTSORTTracker:
         return selected
 
     def update(self,detections,source_time,now,frame_id,start_confidence=.45,
-               strong_confidence=.25,continuation_confidence=.10,image=None,continuity=None,match_thresholds=None):
+               strong_confidence=.25,continuation_confidence=.10,image=None,continuity=None,match_thresholds=None,
+               gmc_settings=None):
+        if gmc_settings is not None:
+            validate_gmc(*gmc_settings)
+            self.gmc_settings=tuple(gmc_settings)
         if match_thresholds is not None:
             values=tuple(float(v) for v in match_thresholds)
             if len(values)!=3 or any(not math.isfinite(v) or not .10<=v<=hi
@@ -233,7 +240,7 @@ class BoTSORTTracker:
                 raise ValueError('Invalid BoT-SORT matching cost thresholds')
             self.match_thresholds=values
         self.numerical_event=None
-        update_started=time.perf_counter();self.engine_ms=0.
+        update_token=activity.token();update_started=activity.clock();self.engine_ms=0.
         try:
             accepted=self._update(detections,source_time,now,frame_id,start_confidence,
                                   strong_confidence,continuation_confidence,image,continuity)
@@ -251,7 +258,8 @@ class BoTSORTTracker:
                 frame_id=frame_id,source_time=source_time,recoveries=count,action='discard_state_reacquire')
             return False
         finally:
-            self.update_ms=(time.perf_counter()-update_started)*1000
+            self.update_ms=activity.duration_ms(update_token,update_started)
+            if not activity.valid(update_token):self.engine_ms=None
 
     def _update(self,detections,source_time,now,frame_id,start_confidence=.45,
                strong_confidence=.25,continuation_confidence=.10,image=None,continuity=None):
@@ -269,6 +277,7 @@ class BoTSORTTracker:
                 with_reid=False,cmc_method='none',name='follow-neo',ablation=False,mot20=False,match_thresh=.8)
             self.engine=BoTSORT(args);self.engine.gmc=CameraMotion()
         engine=self.engine
+        engine.gmc.configure(*self.gmc_settings)
         self.acquisition_confidence=start_confidence
         engine.args.track_high_thresh=engine.track_high_thresh=strong_confidence
         engine.track_low_thresh=low_threshold(strong_confidence);engine.new_track_thresh=start_confidence
@@ -281,9 +290,9 @@ class BoTSORTTracker:
         self.detector_count=len(valid)
         rows=np.array([[d.box.x1,d.box.y1,d.box.x2,d.box.y2,d.confidence] for d in valid],dtype=np.float64).reshape(-1,5)
         target_in_pool=self.target is not None and any(t is self.target for t in engine.tracked_stracks+engine.lost_stracks)
-        engine_started=time.perf_counter()
+        engine_token=activity.token();engine_started=activity.clock()
         tracks=engine.update(rows,image)
-        self.engine_ms=(time.perf_counter()-engine_started)*1000
+        self.engine_ms=activity.duration_ms(engine_token,engine_started)
         if self.acquisition is not None:
             warp=engine.gmc.last_warp;ref=self.acquisition['box']
             ref[:2]=warp[:,:2]@ref[:2]+warp[:,2]
@@ -374,6 +383,12 @@ class BoTSORTTracker:
         return result
 
     def diagnostics(self):
+        if not activity.enabled:
+            # These fields also gate flight authority; retain their live values.
+            return dict(backend=self.backend,
+                acquisition_state='confirmed' if self.confirmed else 'verifying' if self.acquisition else 'reacquiring' if self.acquisition_attempted else 'waiting',
+                acquisition_strong_hits=self.hits if not self.confirmed else 0,
+                association_reason=self.association_reason,candidate_pending=self.candidate_pending)
         return dict(backend=self.backend,target_id=self.target_id,logical_target_id=self.logical_target_id,reid=False,
                     match_thresholds=dict(zip(('primary','weak','tentative'),self.match_thresholds)),
                     timing=dict(update_ms=self.update_ms,engine_ms=self.engine_ms,
@@ -394,6 +409,9 @@ class BoTSORTTracker:
                     detector_count=self.detector_count,target_state=None if self.target is None else int(self.target.state),
                     camera_warp=None if self.engine is None else self.engine.gmc.last_warp.tolist(),
                     camera_motion='initializing' if self.engine is None else self.engine.gmc.status,
+                    camera_motion_config=dict(resolution=self.gmc_settings[0],max_corners=self.gmc_settings[1],
+                        working_size=None if self.engine is None else self.engine.gmc.working_size,
+                        detected_points=0 if self.engine is None or self.engine.gmc.points is None else len(self.engine.gmc.points)),
                     camera_motion_inliers=0 if self.engine is None else self.engine.gmc.inliers)
 
     def association_report(self):

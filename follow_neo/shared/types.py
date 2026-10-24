@@ -1,6 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass, asdict
 import math
+from .gmc import GMC_DEFAULT_RESOLUTION, GMC_DEFAULT_CORNERS, validate_gmc
 
 
 def clamp(x, lo, hi):
@@ -73,6 +74,8 @@ class Settings:
     botsort_match_threshold: float = .80
     botsort_low_match_threshold: float = .50
     botsort_unconfirmed_match_threshold: float = .70
+    gmc_resolution: str = GMC_DEFAULT_RESOLUTION
+    gmc_max_corners: int = GMC_DEFAULT_CORNERS
     inference_fps: float = 30.0
     video_fps: float = 60.0
     edge_search_enabled: bool = True
@@ -110,6 +113,7 @@ class Settings:
     scan_observation_yaw: float = .08
 
     def validate(self):
+        validate_gmc(self.gmc_resolution, self.gmc_max_corners)
         if not math.isfinite(self.scan_observation_degrees) or self.scan_observation_degrees<1.:
             raise ValueError('scan_observation_degrees must be finite and at least 1 degree')
         if self.scan_observation_mode not in ('stop', 'slowdown'):

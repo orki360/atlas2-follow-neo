@@ -8,6 +8,7 @@ import tempfile
 import threading
 import time
 import unittest
+from dataclasses import replace
 from unittest.mock import Mock
 import numpy as np
 
@@ -177,6 +178,14 @@ class ProcessRuntimeTests(unittest.TestCase):
                 wait(has_frame)
                 frame=session.frames.get();self.assertEqual(frame.image.shape,(24,32,3))
                 self.assertTrue((frame.image==73).all())
+                updated=replace(Settings(),gmc_resolution='960x540',gmc_max_corners=450)
+                old_generation=session.generation
+                session.configure(updated)
+                def settings_received():
+                    client.poll()
+                    return session.generation>old_generation and session.get_settings()==updated
+                wait(settings_received)
+                self.assertEqual(session.get_settings(),updated)
                 stamp=frame.decoded_at;generation=session.generation
                 session.set_real_time(True);time.sleep(.3);client.poll()
                 self.assertIsNone(session.frames.get());self.assertIsNone(session.presentation_analysis())
