@@ -353,6 +353,7 @@ def apply_visual(decision, visual, now):
     out.pop('nano_handoff',None);out.pop('nano_intent_time',None)
     out.pop('nano_soft_veto_overridden',None)
     out.pop('curve_motion',None)
+    out['position_applied']=False
     from follow_neo.control.pursuit import recovery_vector
     out['recovery_motion']=recovery_vector(out,visual,now)
     decision=out
@@ -360,11 +361,22 @@ def apply_visual(decision, visual, now):
             (decision.get('target_identity') or {}).get('logical_target_id'),decision.get('generation'),
             decision.get('track_box'))):
         out['intent']['roll']=0.
+    mtime=decision.get('measurement_time')
+    measurement_current=finite(mtime) and 0<=now-mtime<=MEASUREMENT_SECONDS
+    primary_position=(decision.get('control_position') or {}).get('source')=='nanotrack'
+    if primary_position and (not visual or visual.get('mode')!='guarded'
+                             or measurement_current and decision.get('accepted')):
+        # A Nano-derived intent cannot silently become "YOLO only" when its
+        # visual proof expires. The next controller tick computes a real
+        # BoT fallback; old centre coordinates are never relabelled as YOLO.
+        from follow_neo.control.position import position_guard_reason
+        position_reason=position_guard_reason(decision,visual,now)
+        if position_reason:
+            out.update(intent=dict(ZERO),nano_authority='blocked',nano_block_reason=position_reason)
+            return out
     if not visual or visual.get('mode') != 'guarded':
         return out
     out['nano_intent_time']=now
-    mtime=decision.get('measurement_time')
-    measurement_current=finite(mtime) and 0<=now-mtime<=MEASUREMENT_SECONDS
     diagnostics=dict(evaluated_at=now,
         measurement_age_ms=(now-mtime)*1000 if finite(mtime) else None,
         semantic_time=visual.get('semantic_time'),
@@ -412,6 +424,10 @@ def apply_visual(decision, visual, now):
         and measurement_current
         and decision.get('last_strong_measurement_time')==mtime
         and decision.get('state') in ('TRACK','REACQUIRE'))
+    if primary_position and yolo_fresh and reason is None:
+        out.update(nano_authority='verified_yaw',position_applied=True)
+        diagnostics['forward_reason']='real_distance_with_nano_position'
+        return out
     unavailable={'waiting_strong_neo','waiting_visual_update','verifying_identity','semantic_expired',
                  'visual_expired','visual_deadline','nano_error','visual_unavailable'}
     if reason in unavailable and yolo_fresh:
@@ -557,5 +573,7 @@ def transport_visual_reason(sent, latest, now):
             return 'visual_forward_revoked'
         if latest.get('nano_authority')=='bridge_yaw':
             return 'visual_forward_revoked'
-    return guard_reason(old, now) or guard_reason(new, now) or (
+    from follow_neo.control.position import position_guard_reason
+    position_reason=position_guard_reason(sent,old,now) if (sent or {}).get('position_applied') else None
+    return guard_reason(old, now) or guard_reason(new, now) or position_reason or (
         'visual_control_blocked' if (latest or {}).get('nano_authority') == 'blocked' else None)

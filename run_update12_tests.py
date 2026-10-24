@@ -24,6 +24,6 @@ if __name__ == '__main__':
     names.insert(0, 'test_recording_budget')
     names.insert(0, 'test_runtime_mode')
     names.insert(0, 'test_gmc_settings')
-    names[:0] = ['test_early_curve', 'test_diagnostic_epoch']
+    names[:0] = ['test_position_handoff', 'test_nano_position', 'test_early_curve', 'test_diagnostic_epoch']
     result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromNames(names))
     raise SystemExit(0 if result.wasSuccessful() else 1)

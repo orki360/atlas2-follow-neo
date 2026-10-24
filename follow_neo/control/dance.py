@@ -16,6 +16,10 @@ ZERO = (0., 0., 0., 0.)
 
 def dance_command(decision,now,started,*,require_target_policy=False,resume_after=None):
     if not decision:return ZERO,'Waiting for a new target'
+    if decision.get('position_applied'):
+        from follow_neo.control.position import position_guard_reason
+        reason=position_guard_reason(decision,decision.get('nano'),now)
+        if reason:return ZERO,'Nano position hold / '+reason
     visual=decision.get('nano')
     independent=decision.get('nano_authority') in ('yolo_only','search','recovery_vector')
     visual_block=None if independent else guard_reason(visual,now)

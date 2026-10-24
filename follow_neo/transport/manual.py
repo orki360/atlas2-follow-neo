@@ -6,7 +6,7 @@ import math
 from follow_neo.diagnostics import activity
 from follow_neo.control.dance import dance_command, DanceSmoother, SearchSmoother
 from follow_neo.control.edge_search import yaw_override
-from follow_neo.transport.control_transport import ControlChannel, VISUAL_CHANGE, MotionReduction, UNEXPECTED_REPLY
+from follow_neo.transport.control_transport import ControlChannel, VISUAL_CHANGE, MotionReduction, UNEXPECTED_REPLY, RC_ACK_TIMEOUT
 from follow_neo.control.nano_guard import apply_visual
 from follow_neo.control.motion_continuity import pending_motion_status
 from follow_neo.control.recovery_search import scan_command
@@ -14,6 +14,9 @@ from follow_neo.control.search_test import SearchTest
 
 
 MOVEMENT_KEYS = frozenset(('w', 's', 'a', 'd', 'up', 'down', 'left', 'right'))
+# HARD may keep the console active during this bounded neutral wait. This is
+# NOT an extension of the RC ACK deadline, or of any target/command evidence.
+HARD_TCP_WAIT_SECONDS = 1.0
 AXES = ('yaw', 'vertical', 'roll', 'forward')
 DEFAULT_AXIS_LIMITS = {
     'yaw': .50,
@@ -60,6 +63,8 @@ class ManualControl:
         self.pause_started = None
         self.preserve_tracking = False
         self.resume_measurement_after = None
+        self.hard_wait_enabled = False
+        self.hard_wait_error = None
         self.release_acknowledged=threading.Event()
         self.input_keys = set()
         self.blocked_keys = set()
@@ -170,9 +175,44 @@ class ManualControl:
             # The polling loop supplies the detailed waiting/reconnect status.
             # Rewriting it on every poll made the GUI/log alternate forever.
             if changed:self.status = 'CONTROL CONNECTED | MOVEMENT PAUSED: '+reason
+            self._enforce_hard_wait(time.monotonic())
         if first:
             self.on_event('control_movement_paused', {'reason':reason, 'connection_kept':True,
                 'preserve_tracking':self.preserve_tracking,'pause_started':self.pause_started})
+
+    def set_hard_wait(self, enabled):
+        with self.lock:
+            self.hard_wait_enabled=bool(enabled)
+            self.hard_wait_error=None
+
+    def enforce_hard_wait(self):
+        """Control-state check only: no diagnostics, logging or cached snapshot."""
+        with self.lock:return self._enforce_hard_wait(time.monotonic())
+
+    def _enforce_hard_wait(self, now):
+        # Caller holds self.lock. Run here AND immediately before resume, so a
+        # late ACK cannot race the worker's next input/safety poll.
+        if not self.hard_wait_enabled:return None
+        if self.hard_wait_error:return self.hard_wait_error
+        if not self.communication_paused:return None
+        reason=None
+        if self.pause_reason!=f'Control acknowledgement delayed beyond {RC_ACK_TIMEOUT:.2f}s':
+            reason='HARD stopped: '+self.pause_reason
+        elif not (self.auto_resume_allowed and self.preserve_tracking and self.enabled and self.wanted
+                  and self.mode=='DANCE' and not self.hold_before_pause and not self.input_keys
+                  and not self.stop_event.is_set()):
+            reason='HARD stopped: TCP pause is not eligible for automatic recovery'
+        elif not 0<=now-self.updated<=.35:
+            reason='HARD stopped: console heartbeat lost during TCP wait'
+        elif (not isinstance(self.pause_started,(int,float)) or not math.isfinite(self.pause_started)
+              or not 0<=now-self.pause_started<HARD_TCP_WAIT_SECONDS):
+            reason='HARD stopped: TCP recovery exceeded 1.00s'
+        if reason:
+            self.hard_wait_error=reason
+            self.wanted=False;self.auto_resume_allowed=False;self.preserve_tracking=False
+            self.motion_hold=True;self.keys.clear();self.action=None;self.decision=None
+            self.smoother.reset()
+        return reason
 
     def release(self):
         with self.lock:
@@ -352,6 +392,7 @@ class ManualControl:
                     # Recheck user release/focus/heartbeat after polling: an ACK
                     # received during Q / Esc must never re-enable authority.
                     with self.lock:
+                        self._enforce_hard_wait(time.monotonic())
                         requested, self.resume_requested = self.resume_requested, False
                         automatic = self.auto_resume_allowed and not channel.rejected
                         fresh = time.monotonic()-self.updated<=.35
@@ -460,6 +501,14 @@ class ManualControl:
                             decision=apply_visual(decision,decision.get('nano'),command_time)
                         values, self.dance_status = dance_command(decision, command_time, self.dance_started,
                             require_target_policy=self.require_target_policy,resume_after=self.resume_measurement_after)
+                        if self.hard_wait_enabled and self.resume_measurement_after is not None:
+                            strong=(decision or {}).get('last_strong_measurement_time')
+                            if (not isinstance(strong,(int,float)) or not math.isfinite(strong)
+                                    or not self.resume_measurement_after<strong<=command_time):
+                                # A pre-pause search/curve cannot restart movement
+                                # before a new real NEO measurement after recovery.
+                                values=(0.,0.,0.,0.)
+                                self.dance_status='Recovery hold / waiting for new verified target'
                     elif mode == 'DANCE':
                         mode = 'MANUAL'
                         self.dance_status = 'Keyboard override: release keys to resume Dance'
@@ -589,6 +638,8 @@ class ManualControl:
                             'class_support':decision.get('class_support') if decision else None,
                             'nano':decision.get('nano') if decision else None,
                             'nano_authority':decision.get('nano_authority') if decision else None,
+                            'control_position':decision.get('control_position') if decision else None,
+                            'position_applied':decision.get('position_applied',False) if decision else False,
                             'nano_soft_veto_overridden':decision.get('nano_soft_veto_overridden') if decision else None,
                             'resume_measurement_after':self.resume_measurement_after,
                             'nano_handoff':decision.get('nano_handoff') if decision else None,

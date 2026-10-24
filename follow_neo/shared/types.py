@@ -93,6 +93,7 @@ class Settings:
     search_timeout: float = 4.0
     follow_and_hold: bool = True
     nano_mode: str = 'guarded'
+    nano_primary_position: bool = True
     forward_window_width: float = .80
     forward_window_height: float = .70
     forward_soft_zone: float = .20
@@ -120,6 +121,8 @@ class Settings:
             raise ValueError('scan_observation_mode must be stop or slowdown')
         if self.nano_mode not in ('off', 'shadow', 'guarded'):
             raise ValueError('nano_mode must be off, shadow or guarded')
+        if not isinstance(self.nano_primary_position, bool):
+            raise ValueError('nano_primary_position must be a boolean')
         if not isinstance(self.edge_search_enabled,bool):
             raise ValueError('edge_search_enabled must be a boolean')
         if not isinstance(self.search_auto_duration,bool):

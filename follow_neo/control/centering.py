@@ -5,7 +5,7 @@ from follow_neo.transport.telemetry import fresh_heading
 from follow_neo.shared.types import clamp
 from .. import __revision__
 from follow_neo.control.approach import LateralEvidence
-from follow_neo.control.curve import EarlyCurve
+from follow_neo.control.position_motion import BearingMotion, YawHandoff
 
 
 class HeadingRate:
@@ -41,33 +41,55 @@ class DampedTrackingController(SmartTrackingController):
         self.last_measurement=None;self.error_rate=0.;self.last_tick=None
         self.centered=True;self.forward_factor=1.;self.diagnostics={}
         self.lateral=LateralEvidence()
-        self.curve=EarlyCurve()
+        self.motion={'botsort':BearingMotion(),'nanotrack':BearingMotion()}
+        self.curve=self.motion['botsort'].curve
+        self.handoff=YawHandoff()
+        self.position_key=None
 
-    def compute(self,k,w,h,age,occluded,now,settings,heading=None,measurement_time=None,measured_error=None,lateral_observation=None,current_visual=False,continuity_verified=False):
+    def compute(self,k,w,h,age,occluded,now,settings,heading=None,measurement_time=None,measured_error=None,lateral_observation=None,current_visual=False,continuity_verified=False,position=None):
+        position=position or {}
+        bot_time,bot_error=measurement_time,measured_error
+        visual_position=(position or {}).get('source')=='nanotrack'
+        identity_key=(lateral_observation or {}).get('identity_key')
+        position_key=(('nanotrack',position['generation'],position['identity'],position['epoch'])
+                      if visual_position else ('botsort',identity_key))
+        self.position_key=position_key
+        if visual_position:
+            measurement_time=position['source_time']
+            measured_error=(k.cx-w*.5)/(w*.5)
         out,ex,ey=super().compute(k,w,h,age,occluded,now,settings)
         rate=self.heading_rate.update(heading,now)
         dt=0. if self.last_tick is None else max(0.,min(.1,now-self.last_tick))
         self.last_tick=now
         valid=(not occluded and k.initialized and measurement_time is not None
                and measured_error is not None and math.isfinite(measured_error))
-        if valid and (self.last_measurement is None or measurement_time>self.last_measurement[0]):
-            old=self.last_measurement
-            self.last_measurement=(measurement_time,measured_error)
-            if old and .005<=measurement_time-old[0]<=.20 and abs(measured_error-old[1])<.35:
-                span=measurement_time-old[0]
-                derivative=clamp((measured_error-old[1])/span,-4.,4.)
-                self.error_rate+=span/(.08+span)*(derivative-self.error_rate)
-            else:self.error_rate=0.
-        if self.last_measurement is None or now-self.last_measurement[0]>.25:
-            self.error_rate=0.
         # Continuous demand to zero, with a small start/stop hysteresis.
         if abs(ex)<=(.06 if self.centered else .025):self.centered=True
         else:self.centered=False
         combined=bool(valid and continuity_verified and age<=.25
                       and (current_visual or not settings.forward_require_nano))
-        curve=self.curve.update(measurement_time,measured_error,now,
-            (lateral_observation or {}).get('identity_key'),valid and lateral_observation is not None,
-            combined and settings.coordinated_turns and rate is not None)
+        curve_allowed=combined and settings.coordinated_turns and rate is not None
+        # Warm the detector history even while Nano supplies position. Samples
+        # are differentiated ONLY against their own source and original clock.
+        bot_valid=(not occluded and k.initialized and bot_time is not None
+                   and bot_error is not None and math.isfinite(bot_error))
+        bot_rate,bot_curve=self.motion['botsort'].update(bot_time,bot_error,now,identity_key,
+            bot_valid,bot_valid and lateral_observation is not None,curve_allowed)
+        candidate=position if visual_position else position.get('motion_candidate')
+        if candidate:
+            nano_error=(candidate['center'][0]-w*.5)/(w*.5)
+            nano_key=tuple(candidate[key] for key in ('generation','identity','epoch'))
+            nano_rate,nano_curve=self.motion['nanotrack'].update(candidate['source_time'],nano_error,
+                now,nano_key,valid,valid and lateral_observation is not None,curve_allowed)
+        elif position.get('reason') not in ('visual_expired','waiting_visual_update',
+                                           'nano_position_unverified','missing_source_alignment'):
+            # Rejected appearance/identity/geometry must rebuild Nano history.
+            # A short missing update may retain old samples, never old authority.
+            if self.motion['nanotrack'].last_measurement is not None:
+                self.motion['nanotrack']=BearingMotion()
+        source='nanotrack' if visual_position else 'botsort'
+        self.last_measurement=self.motion[source].last_measurement;self.curve=self.motion[source].curve
+        self.error_rate,curve=(nano_rate,nano_curve) if visual_position else (bot_rate,bot_curve)
         p=.65*(ex+curve['lead']);d=.09*self.error_rate
         # Body-rate feedback only damps a turn already directed toward the target.
         damping=.0012*rate if rate is not None and rate*ex>0 else 0.
@@ -114,11 +136,18 @@ class DampedTrackingController(SmartTrackingController):
         elif occluded:target=min(target,self.forward_factor)
         rise=settings.forward_rise_per_second if combined else min(1.,settings.forward_rise_per_second)
         self.forward_factor=min(target,self.forward_factor+dt*rise)
+        # Forward/side safety above used the unfiltered demand and live error.
+        # Only an increase in ordinary yaw may be eased across a source switch.
+        yaw,handoff_limited=self.handoff.update(demand,ex,now,position_key,identity_key,
+            bool(position.get('handoff_enabled') and valid and identity_key is not None))
+        out.yaw=yaw*settings.yaw_limit
         self.diagnostics=dict(revision=__revision__,error_x=ex,error_rate=self.error_rate,
+            position_source='nanotrack' if visual_position else 'botsort',position_time=measurement_time,
             measured_error=measured_error,heading_rate_deg_s=rate,
             heading_age_ms=None if not fresh_heading(heading,now) else (now-heading['time'])*1000,
             proportional=p,derivative=d,rate_damping=damping,lead_error=lead_error,
-            braking=braking,centered=self.centered,yaw_normalized=demand,
+            braking=braking,centered=self.centered,yaw_normalized=yaw,yaw_requested=demand,
+            position_handoff_limited=handoff_limited,
             forward_alignment_scale=self.forward_factor,combined_motion=combined,
             coordinated_turn=coordinated,early_curve=curve,
             yaw_demand_policy='slowdown' if coordinated else 'ceiling',

@@ -67,7 +67,14 @@ def pending_motion_status(sent, latest, now, started, wire_values, limits,
         and finite(source) and finite(previous) and source>previous and 0<=now-source<=.25)
     # Re-evaluate the OLD decision with live visual evidence too: this keeps
     # its real-source time, forward anchor, proximity and acquisition limits.
-    refreshed = apply_visual(sent, new, now)
+    captured=sent
+    if (sent.get('position_applied') and latest.get('position_applied')
+            and source==previous and latest.get('measurement_id')==sent.get('measurement_id')):
+        # Current position may support the OLD wire value only after the same
+        # identity/epoch checks above, and only if BOTH grants below allow it.
+        # Keep the old real measurement, intent, decision and ACK deadlines.
+        captured=dict(sent,control_position=latest['control_position'])
+    refreshed = apply_visual(captured, new, now)
     grants = []
     for decision in ((latest,) if real_handoff else (refreshed, latest)):
         values, gate = dance_command(decision, now, started,

@@ -382,12 +382,17 @@ class FollowLabWindow:
                   foreground='#8cbbb8',wraplength=340).pack(anchor='w',pady=5)
         ttk.Label(settings,text='Nano shadow: display / logs only.\nGuarded: bounded visual continuity; real YOLO\nrenews identity. Search remains independently gated.',
                   foreground='#d9b56c',wraplength=285).grid(row=len(controls)+5,columnspan=2,sticky='w',pady=5)
+        self.nano_primary_position=tk.BooleanVar(value=values['nano_primary_position'])
+        ttk.Checkbutton(settings,text='NanoTrack primary position (Dance)',
+                        variable=self.nano_primary_position).grid(row=len(controls)+6,columnspan=2,sticky='w',pady=5)
+        ttk.Label(settings,text='Guarded Nano supplies the current centre.\nYOLO / BoT keep identity and distance.\nUnchecked: use the previous BoT position path.',
+                  foreground='#8cbbb8',wraplength=285).grid(row=len(controls)+7,columnspan=2,sticky='w')
         ttk.Button(right,text='Reset target / spacing',command=self.reset).pack(fill='x',pady=2)
         ttk.Button(right,text='Open session logs',command=self.open_logs).pack(fill='x',pady=2)
         self.notice=tk.StringVar(value='Enter the IP shown in MSDKRemote. Start its Video Server first.')
         ttk.Label(root,textvariable=self.notice,wraplength=1250,padding=10,foreground='#d9b56c').pack(side='bottom',fill='x',before=body)
         self.settings=Settings(**self.loaded_values)
-        for var in list(self.vars.values())+[self.hold,self.edge_search_on,self.search_auto,self.nano_mode,self.forward_require_nano,self.coordinated_turns,self.scan_observation_mode,self.gmc_resolution]: var.trace_add('write',self.mark_dirty)
+        for var in list(self.vars.values())+[self.hold,self.edge_search_on,self.search_auto,self.nano_mode,self.nano_primary_position,self.forward_require_nano,self.coordinated_turns,self.scan_observation_mode,self.gmc_resolution]: var.trace_add('write',self.mark_dirty)
         self.mark_dirty()
         self.compute.trace_add('write',lambda *a:self.notice.set('Compute changes take effect on the next Connect.'))
         self.root.after(50,self.refresh)
@@ -399,6 +404,7 @@ class FollowLabWindow:
         data['gmc_resolution']=self.gmc_resolution.get()
         data['follow_and_hold']=self.hold.get()
         data['nano_mode']=self.nano_mode.get()
+        data['nano_primary_position']=self.nano_primary_position.get()
         data['forward_require_nano']=self.forward_require_nano.get()
         data['coordinated_turns']=self.coordinated_turns.get()
         data['scan_observation_mode']=self.scan_observation_mode.get()
@@ -890,6 +896,7 @@ class FollowLabWindow:
                 self.metrics.set(f"{self.model.get()}\nModel: {compute_label} | input {model_size}\n"
                     f"YOLO: {inference} | target age: {age_text}\n"
                     f"Track source: {decision.get('track_support','--')}\n"
+                    f"Position: {(decision.get('control_position') or {}).get('source','botsort')} / {(decision.get('control_position') or {}).get('reason','--')}\n"
                     f"Nano: {(decision.get('nano') or {}).get('mode','off')} / {(decision.get('nano') or {}).get('visual_state','--')} / {(decision.get('nano') or {}).get('update_fps',0):.1f} FPS\n"
                     f"Nano control: {(decision.get('nano') or {}).get('reason','--')}\n"
                     f"Target {decision.get('tracking',{}).get('logical_target_id','--')} / BoT ID {decision.get('tracking',{}).get('target_id','--')}\n"

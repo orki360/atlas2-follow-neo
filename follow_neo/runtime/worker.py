@@ -55,7 +55,7 @@ class Runtime:
     def input_loop(self):
         while not self.stop.wait(.005):
             self.consume_input()
-            if self.hard_ready and (not self.manual.thread.is_alive() or not self.manual.connected or self.manual.communication_paused
+            if self.hard_ready and (not self.manual.thread.is_alive() or not self.manual.connected or self.manual.enforce_hard_wait()
                     or not self.manual.wanted or self.session.model_error
                     or self.session.receiver.state!='STREAMING' or self.terminal_dance()):
                 self.inputs.hard_abort.set();self.manual.release()
@@ -180,6 +180,7 @@ class Runtime:
                 if (fence!=self.inputs.fence.value or not m.control_snapshot()['active']
                         or s.receiver.state!='STREAMING' or self.inputs.hard_abort.is_set()):
                     raise RuntimeError('HARD entry cancelled or control lost')
+                m.set_hard_wait(True)
                 m.start_dance();s.restart_control();self.hard_ready=True
                 return None
             except Exception:
@@ -249,6 +250,7 @@ class Runtime:
     def exit_hard(self):
         self.hard_ready=False
         confirmed=True
+        stop_reason=self.manual.hard_wait_error if self.manual else None
         try:
             if self.manual:
                 m=self.manual;m.release();m.manual_mode()
@@ -261,6 +263,7 @@ class Runtime:
                 m.detailed_logging=True
         finally:
             try:
+                if self.manual:self.manual.set_hard_wait(False)
                 if self.session:
                     self.session.set_hard(False);self.session.set_real_time(False)
             finally:
@@ -268,7 +271,7 @@ class Runtime:
                 self.timings=TimingWindow();self.ui_metrics={}
                 self.real_time=False;self.input_origin='gui';self.last_pulse=0.
                 self.hard=False;self.presentation_gate.set()
-        return dict(release_acknowledged=confirmed)
+        return dict(release_acknowledged=confirmed,hard_stop_reason=stop_reason)
 
     def _manual_call(self,method,args,kwargs):
         if method=='detailed_logging':self.manual.detailed_logging=bool(args[0]);return None

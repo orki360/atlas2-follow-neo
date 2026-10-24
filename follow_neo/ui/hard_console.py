@@ -88,6 +88,8 @@ def run_hard(client,session_id,manual_id,console,*,on_ready=None):
         try:
             result=pool.submit(client.call,'hard_exit',identity=session_id,timeout=12.).result(timeout=35.)
             confirmed=result['release_acknowledged']
+            if reason=='Control or video unavailable' and result.get('hard_stop_reason'):
+                reason=result['hard_stop_reason']
         except (Exception,KeyboardInterrupt):
             confirmed=False
         finally:

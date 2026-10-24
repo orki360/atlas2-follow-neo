@@ -111,7 +111,9 @@ class FollowSession:
              'architecture_mode':architecture_mode,'runtime_pid':os.getpid(),
              'model':self.model_manifest,'recording_profile':recording_profile,'real_time':self.real_time,
              'tracking_backend':'BoT-SORT','tracking_reid':False,
-             'tracking_motion':'botsort_with_separate_nano','nano_mode':self.settings.nano_mode,
+             'tracking_motion':('nano_position_with_botsort_identity' if self.settings.nano_primary_position
+                                else 'botsort_with_separate_nano'),'nano_mode':self.settings.nano_mode,
+             'nano_primary_position':self.settings.nano_primary_position,
              'opencv_threads':cv2.getNumThreads(),'tracking_revision':__revision__,'control_revision':__revision__,
              'flight_control':'explicit_manual_or_dance_enable_required',
              'timestamp_origin':'local_decoder_monotonic_not_camera_exposure'}))

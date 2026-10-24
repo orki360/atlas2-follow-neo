@@ -12,6 +12,7 @@ from follow_neo.control.approach import forward_diagnostics
 from follow_neo.perception.class_memory import NeoClassMemory
 from follow_neo.control.pursuit import RecoveryVector
 from follow_neo.control.curve import CurveContinuation
+from follow_neo.control.position import PositionSelector
 from follow_neo.control.nano_guard import ForwardAnchorHistory, RealNeoEvidence, MEASUREMENT_SECONDS, current_visual_support, sustained_real_neo
 from follow_neo.perception.prediction import (COAST_SECONDS, COAST_YAW, COAST_VERTICAL, STABLE_FORWARD_SECONDS,
                          fade, forward_fade, continuation_threshold)
@@ -53,6 +54,7 @@ class FollowController:
         self.raw_detections=[]
         self.detection_summary={}
         self.control_result_floor=None
+        self.position_selector=PositionSelector()
 
     def restart_control(self):
         """Reset control history and spacing without erasing target identity."""
@@ -65,6 +67,7 @@ class FollowController:
         self.curve_continuation=CurveContinuation()
         self.edge_search.reset()
         self.control_result_floor=self.result_id
+        self.position_selector=PositionSelector()
 
     def _new_centering(self):
         return DampedTrackingController() if self.tracker_backend=='botsort' else SmartTrackingController()
@@ -158,10 +161,23 @@ class FollowController:
         stale=stream_stale or result_stale
         after_restart=self.control_result_floor is None or (self.result_id is not None and self.result_id>self.control_result_floor)
         real_fresh=not self.rejected and age<=MEASUREMENT_SECONDS and after_restart
+        steering_k=k
+        position=dict(source='botsort',reason='legacy_backend',size_source='yolo_botsort')
+        if self.tracker_backend=='botsort':
+            position_context=dict(accepted=real_fresh,confirmed=t.confirmed,stale=stale,
+                class_support=self.class_support,selected_class_id=identity.get('class_id') if identity_valid else None,
+                selected_class_name=identity.get('class_name') if identity_valid else None,
+                target_identity=identity if identity_valid else None,generation=generation,
+                measurement_time=mtime,measurement_id=t.measurement_id,last_strong_measurement_time=t.last_strong_time,
+                selected_measurement_box=list(vars(self.last_accepted.box).values()) if self.last_accepted else None,
+                real_neo_evidence=self.real_neo_evidence.snapshot())
+            steering_k,position=self.position_selector.select(position_context,k,visual,now,
+                enabled=settings.nano_primary_position and control_available)
         centering_kwargs={}
         if self.tracker_backend=='botsort':
             measured_error=None if self.last_accepted is None else (self.last_accepted.box.cx-width*.5)/(width*.5)
             centering_kwargs=dict(heading=heading,measurement_time=mtime,measured_error=measured_error)
+            centering_kwargs['position']=position
             centering_kwargs['current_visual']=bool(real_fresh and identity_valid
                 and self.class_support is None and not t.measurement_weak
                 and self.last_accepted is not None
@@ -177,7 +193,7 @@ class FollowController:
                 centering_kwargs['lateral_observation']=dict(time=mtime,point=(b.cx,b.cy),width=width,frame_id=t.engine.frame_id,
                     identity_key=(generation,identity['logical_target_id']),
                     warp=gmc.last_warp.tolist(),camera_valid=gmc.status=='applied')
-        raw,ex,ey=self.smart.compute(k,width,height,age,not real_fresh,now,settings,**centering_kwargs)
+        raw,ex,ey=self.smart.compute(steering_k,width,height,age,not real_fresh,now,settings,**centering_kwargs)
         raw.forward*=settings.forward_limit
         current_center=replace(raw);measurement_scale=1. if real_fresh else 0.
         std=uncertainty.get('position_std_px')
@@ -267,6 +283,7 @@ class FollowController:
                 'real_neo_evidence':self.real_neo_evidence.snapshot(),
                 'tracking':t.diagnostics() if self.tracker_backend=='botsort' else {'backend':'legacy'},
                 'candidate_pending':pending,
+                'control_position':position,
                 'verified_forward_anchor':self.last_forward_anchor,
                 'verified_forward_history':self.forward_anchors.snapshot(),
                 'result_received_at':self.result_received_at,
@@ -347,7 +364,7 @@ class FollowController:
         decision['motion_settings']={name:getattr(settings,name) for name in (
             'forward_window_width','forward_window_height','forward_soft_zone',
             'forward_yaw_demand_limit','forward_yaw_rate_limit','forward_rise_per_second',
-            'forward_require_nano','coordinated_turns','nano_visual_max_age_seconds','search_translation_seconds',
+            'forward_require_nano','coordinated_turns','nano_visual_max_age_seconds','nano_primary_position','search_translation_seconds',
             'search_forward_fraction','search_side_fraction','search_look_seconds','search_settle_seconds',
             'scan_observation_degrees','scan_yaw_limit','scan_observation_mode','scan_observation_yaw')}
         self.recovery_vector.remember(decision,visual,now,control_available)

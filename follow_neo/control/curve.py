@@ -15,7 +15,7 @@ MAX_CURVE_HEADING_CHANGE = 20.
 
 class EarlyCurve:
     def __init__(self):
-        self.samples=deque(maxlen=3);self.identity=None;self.active=False
+        self.samples=deque(maxlen=16);self.identity=None;self.active=False
 
     def update(self, source, error, now, identity, measured, allowed):
         no=lambda reason:dict(active=False,reason=reason,lead=0.,direction=0)
@@ -29,11 +29,20 @@ class EarlyCurve:
         if not self.samples or source>self.samples[-1][0]:self.samples.append((source,error))
         if not allowed or len(self.samples)<3:
             self.active=False;return no('waiting_coherent_motion')
-        a,b,c=self.samples
+        # Three adjacent Nano frames span less than the existing 100 ms proof
+        # window. Sample that SAME time horizon at either camera or YOLO rate.
+        c=self.samples[-1]
+        middle=[s for s in self.samples if c[0]-s[0]>=.05-1e-9]
+        b=middle[-1] if middle else None
+        earlier=[s for s in self.samples if b is not None and b[0]-s[0]>=.05-1e-9]
+        if not earlier:
+            self.active=False;return no('waiting_coherent_motion')
+        a=earlier[-1]
         spans=(b[0]-a[0],c[0]-b[0]);steps=(b[1]-a[1],c[1]-b[1])
         direction=1 if error>0 else -1
-        coherent=(all(.005<=dt<=.20 for dt in spans) and c[0]-a[0]>=.10
-                  and all(.003<step*direction<.15 for step in steps))
+        coherent=(all(.005<=dt<=.20 for dt in spans) and c[0]-a[0]>=.10-1e-9
+                  and all(.003<step*direction<.15 for step in steps)
+                  and (c[1]-self.samples[-2][1])*direction>0)
         speed=(c[1]-a[1])/(c[0]-a[0]) if c[0]>a[0] else 0.
         # Inward motion/reversal immediately removes the lead; repeated ticks
         # cannot add evidence. Hysteresis applies only to entry/exit thresholds.
