@@ -21,6 +21,7 @@ from follow_neo.runtime.session import FollowSession
 from follow_neo.presentation.overlay import render_bundle
 from follow_neo.perception.models import DEFAULT_MODEL,MODEL_NAMES,DUAL_MODELS,model_from_config
 from follow_neo.transport.manual import ManualControl, MOVEMENT_KEYS, AXES, DEFAULT_AXIS_LIMITS
+from follow_neo.transport.cadence import DEFAULT_SEND_HZ, SEND_HZ_OPTIONS, checked_send_hz, send_hz_from_config
 from follow_neo.control.control_status import control_indicator, acknowledged_command_text, target_status_text
 from follow_neo.ui.state_diagram import LiveStateDiagram
 from follow_neo.control.approach import forward_status_text
@@ -80,6 +81,7 @@ class FollowLabWindow:
         if self.config_path.exists():
             try: cfg=json.loads(self.config_path.read_text(encoding='utf-8'))
             except (OSError,ValueError): pass
+        self.tcp_send_hz=send_hz_from_config(cfg)
         self.root.title(f'ATLAS2 Follow NEO | Version {__version__} / {__revision__} - BoT-SORT')
         self.root.geometry('1440x880'); self.root.minsize(1200,760)
         self.root.configure(bg='#101820')
@@ -210,6 +212,20 @@ class FollowLabWindow:
         controls_page,self.controls_tab=page('Control / Search')
         settings_page,self.settings_tab=page('Settings')
         bot_page,self.botsort_tab=page('BoT-SORT')
+        pacing=ttk.LabelFrame(controls_page,text='TCP command timing',padding=8)
+        pacing.pack(fill='x',pady=(0,8))
+        ttk.Label(pacing,text='Send rate (Hz)').pack(anchor='w')
+        self.send_hz_var=tk.StringVar(value=str(self.tcp_send_hz))
+        self.send_rate_picker=ttk.Combobox(pacing,textvariable=self.send_hz_var,
+            values=tuple(map(str,SEND_HZ_OPTIONS)),state='readonly',width=10)
+        self.send_rate_picker.pack(anchor='w',pady=3)
+        self.send_rate_picker.bind('<<ComboboxSelected>>',lambda event:self.update_send_rate_note())
+        self.send_rate_note=tk.StringVar()
+        ttk.Label(pacing,textvariable=self.send_rate_note,foreground='#8cbbb8').pack(anchor='w')
+        ttk.Button(pacing,text='Apply TCP send rate / save',command=self.apply_send_rate).pack(fill='x',pady=5)
+        ttk.Label(pacing,text='Target rate for keyboard, Dance and HARD.\n20 Hz = 50 ms; 25 Hz = 40 ms; 30 Hz = 33.33 ms.\nLate ACKs can reduce the actual rate.\nACK safety limit stays 250 ms. No catch-up bursts.',
+                  foreground='#8cbbb8',wraplength=310).pack(anchor='w')
+        self.update_send_rate_note()
         self.speed_bar=ttk.LabelFrame(controls_page,text='Axis limits',padding=8); self.speed_bar.pack(fill='x')
         ttk.Label(self.speed_bar,text='Normal tracking and keyboard (%)',foreground='#6ad5cb').pack(anchor='w')
         stored_limits=cfg.get('axis_limits',{})
@@ -415,7 +431,8 @@ class FollowLabWindow:
     def save_config(self):
         data={'schema_version':8,'model_name':self.model.get(),'recording_profile':self.recording_profile.get(),'phone_ip':self.ip.get().strip(),'codec':self.codec.get(),
               'compute':self.compute.get(),'gpu_adapter':self.device.get(),'settings':asdict(self.settings),
-              'axis_limits':self.current_axis_limits()}
+              'axis_limits':self.current_axis_limits(),
+              'tcp_send_hz':getattr(self,'tcp_send_hz',DEFAULT_SEND_HZ)}
         tmp=self.config_path.with_suffix('.tmp')
         tmp.write_text(json.dumps(data,indent=2),encoding='utf-8'); tmp.replace(self.config_path)
 
@@ -434,7 +451,8 @@ class FollowLabWindow:
             self.session=factory(self.base,host,self.codec.get(),self.settings,self.record.get(),self.compute.get(),self.device.get(),self.model.get(),self.recording_profile.get(),real_time=getattr(self,'real_time',False))
             self.session.control_provider=self.control_snapshot
             self.session.start(); self.rates.clear(); self.mark_dirty()
-            self.log_control('architecture_configuration',dict(axis_limits=self.current_axis_limits()))
+            self.log_control('architecture_configuration',dict(axis_limits=self.current_axis_limits(),
+                tcp_send_hz=self.tcp_send_hz,tcp_send_period_ms=1000./self.tcp_send_hz))
             self.model_picker.configure(state='disabled');self.recording_picker.configure(state='disabled');self.compute_picker.configure(state='disabled'); self.device_picker.configure(state='disabled')
             self.connect_button.configure(state='disabled'); self.disconnect_button.configure(state='normal')
             self.notice.set('Video connected. Keyboard control connects separately using Connect keyboard.')
@@ -508,10 +526,11 @@ class FollowLabWindow:
             from ..runtime.client import RemoteManual
             factory=lambda *args,**kwargs:RemoteManual(self.runtime,*args,**kwargs)
         self.manual=factory(host,on_event=self.log_control,decision_provider=self.dance_decision,
-                                  require_target_policy=True)
+                                  require_target_policy=True,send_hz=self.tcp_send_hz)
         self.manual.detailed_logging=not getattr(self,'real_time',False)
         self.manual.set_axis_limits(self.current_axis_limits())
-        self.log_control('architecture_configuration',dict(axis_limits=self.current_axis_limits()))
+        self.log_control('architecture_configuration',dict(axis_limits=self.current_axis_limits(),
+            tcp_send_hz=self.tcp_send_hz,tcp_send_period_ms=1000./self.tcp_send_hz))
         if self.dance_selected: self.manual.start_dance()
         self.manual.start()
         self.canvas.focus_set()
@@ -591,6 +610,22 @@ class FollowLabWindow:
     def current_axis_limits(self):
         return {axis:max(0.,min(100.,float(self.axis_limit_vars[axis].get())))/100.
                 for axis in AXES}
+
+    def update_send_rate_note(self):
+        hz=checked_send_hz(self.send_hz_var.get())
+        self.send_rate_note.set(f'Selected: {hz} Hz / {1000./hz:.2f} ms\nApplied target: {self.tcp_send_hz} Hz')
+
+    def apply_send_rate(self):
+        try:
+            hz=checked_send_hz(self.send_hz_var.get())
+            if self.manual and self.manual.thread.is_alive():self.manual.set_send_hz(hz)
+            self.tcp_send_hz=hz
+            self.save_config()
+            self.update_send_rate_note()
+            self.log_control('tcp_send_rate_changed',dict(tcp_send_hz=hz,
+                tcp_send_period_ms=1000./hz,rc_ack_limit_ms=250,scheduler='absolute_perf_counter'))
+            self.notice.set(f'TCP target saved: {hz} Hz / {1000./hz:.2f} ms. ACK limit: 250 ms.')
+        except Exception as exc:messagebox.showerror('TCP send rate',str(exc))
 
     def change_axis_speed(self,axis,value):
         try:

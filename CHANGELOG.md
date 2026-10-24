@@ -1,5 +1,28 @@
 # CHANGELOG — Dancing Drones / Follow NEO
 
+## Version 18.0.1 — Absolute TCP command pacing — 2026-10-24
+
+- Replace relative cycle timing with absolute `perf_counter` deadlines. Read
+  the latest control decision after waiting, include ACK/work in the slot, and
+  skip missed slots without queuing old decisions or catch-up sends.
+- Add Control / Search > TCP command timing: 20 Hz (default), 25 Hz or 30 Hz,
+  with the corresponding millisecond period and an explicit Apply/save button.
+  Persist `tcp_send_hz` separately from tracking settings and pass it to the
+  process runtime. Applying a rate does not reset tracking or grant authority.
+- Keep FIFO TCP replies, the 250 ms RC ACK timeout, source freshness, stage-2
+  Nano/BoT continuity, focus/heartbeat release and HARD recovery unchanged.
+  Handshake, neutralization, release and paused recovery are not rate-throttled.
+- Normal/Real-Time logs include the selected rate and a high-resolution send
+  attempt timestamp for offline interval analysis. HARD has no new diagnostic
+  sampling or records; its pacing clock is operational only.
+- Add deterministic clock, simulated TCP and GUI persistence tests plus an
+  offline socketpair benchmark. No Android/service/protocol changes.
+- Validation: 729 regression tests, 44 architecture/HARD tests and the offline
+  Tk widget check passed. On this Windows/Python setup, a 5-second-per-rate
+  socketpair run with synthetic 5 ms ACKs measured 16.95 Hz for the previous
+  relative pacing and 20.01 / 24.98 / 30.03 Hz for the new 20 / 25 / 30 targets.
+  This excludes video/inference and does not guarantee field timing or latency.
+
 ## Version 16.0.3 — Early verified curves and HARD timing epochs — 2026-10-22
 
 - Within TRACK, lead yaw from three coherent, outward real NEO measurements,

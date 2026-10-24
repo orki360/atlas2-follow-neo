@@ -11,6 +11,7 @@ from follow_neo.control.nano_guard import apply_visual
 from follow_neo.control.motion_continuity import pending_motion_status
 from follow_neo.control.recovery_search import scan_command
 from follow_neo.control.search_test import SearchTest
+from follow_neo.transport.cadence import DEFAULT_SEND_HZ, SendCadence, checked_send_hz
 
 
 MOVEMENT_KEYS = frozenset(('w', 's', 'a', 'd', 'up', 'down', 'left', 'right'))
@@ -40,7 +41,7 @@ def shape_dance_axis(value,limit):
 
 class ManualControl:
     def __init__(self, host, connector=socket.create_connection, on_event=None, decision_provider=None,
-                 *,require_target_policy=False):
+                 *,require_target_policy=False,send_hz=DEFAULT_SEND_HZ):
         self.host = host
         self.detailed_logging = True
         self.connector = connector
@@ -54,6 +55,7 @@ class ManualControl:
         self.dance_started = 0.
         self.dance_status = 'Dance off'
         self.axis_limits = dict(DEFAULT_AXIS_LIMITS)
+        self.send_hz = checked_send_hz(send_hz)
         self.motion_hold = False
         self.communication_paused = False
         self.pause_reason = ''
@@ -109,6 +111,12 @@ class ManualControl:
             checked[axis] = max(0., min(1., value))
         with self.lock:
             self.axis_limits = checked
+
+    def set_send_hz(self, value):
+        checked = checked_send_hz(value)
+        with self.lock:
+            self.send_hz = checked
+        return checked
 
     def start_dance(self):
         with self.lock:
@@ -278,6 +286,7 @@ class ManualControl:
                     and self.pause_started is not None and 0<=now-self.pause_started<=1.
                     and now-self.updated<=.35 and not self.stop_event.is_set()),
                 connected=self.connected,paused=self.communication_paused,pause_reason=self.pause_reason,
+                send_hz=self.send_hz,
                 acknowledged=self.last_acknowledged,motion_hold=self.motion_hold,
                 transport=transport,keyboard_override=bool(self.keys or self.blocked_keys),time=now,
                 search_test=dict(self.search_test.last_sample or {},finished=self.search_test.finished)
@@ -290,6 +299,7 @@ class ManualControl:
         channel = None
         failure = None
         pending_log_key = None
+        cadence = SendCadence()
 
         def guard(motion_keys=None):
             nonlocal pending_log_key
@@ -360,7 +370,6 @@ class ManualControl:
                 return result
             self.status = 'Control connected | E: enable keyboard'
             while not self.stop_event.is_set():
-                cycle_started=time.monotonic()
                 with self.lock:
                     stale = self.wanted and time.monotonic()-self.updated>.35
                     externally_paused = self.communication_paused
@@ -370,6 +379,7 @@ class ManualControl:
                 if externally_paused and not channel.paused:
                     channel.pause(pause_reason)
                 if channel.paused:
+                    cadence.reset()
                     pause_channel()
                     with self.lock:
                         if self.search_test and not self.search_test.finished:
@@ -469,6 +479,14 @@ class ManualControl:
                         self.status = 'CONTROL CONNECTED | MOVEMENT PAUSED | '+channel.pause_reason+' | '+detail
                     self.stop_event.wait(.02)
                     continue
+                with self.lock:
+                    send_hz = self.send_hz
+                    pacing_active = authority and self.wanted
+                if pacing_active:
+                    if not cadence.wait(self.stop_event, send_hz):break
+                else:
+                    cadence.reset()
+                # Fetch AFTER waiting: no old decision is queued for a slot.
                 # Fetch the latest thread-safe decision independently of costly
                 # Tk drawing. The UI heartbeat and explicit authority remain.
                 latest=self.decision_provider() if self.decision_provider else None
@@ -629,6 +647,7 @@ class ManualControl:
                         ack_ms=channel.last_ack['ack_ms'] if channel.last_ack else None)
                     if self.detailed_logging and activity.enabled:
                         self.on_event('flight_command', {'mode': mode, 'command': 'rc',
+                            'tcp_send_hz':send_hz,'tcp_send_period_ms':1000./send_hz,
                             'selected_mode': selected_mode,
                             'target_policy':decision.get('target_policy') if decision else None,
                             'selected_class_id':decision.get('selected_class_id') if decision else None,
@@ -687,6 +706,7 @@ class ManualControl:
                         # Keep command counts/transitions without building the
                         # diagnostic tracking tree. TCP/ACK handling is identical.
                         self.on_event('flight_command', dict(mode=mode,command='rc',
+                            tcp_send_hz=send_hz,tcp_send_period_ms=1000./send_hz,
                             values=list(values),gate_reason=gate_reason,command_time=command_time,
                             ack_ms=self.last_acknowledged['ack_ms'],server_acknowledged=True))
                     with self.lock:
@@ -697,9 +717,9 @@ class ManualControl:
                         self.on_event('flight_command', {'mode': 'MANUAL', 'command': action,
                             'server_acknowledged': True})
                         self.status = f'{action}: success | Q / Esc: release'
-                # 20 Hz start-to-start; ACK latency is already part of the
-                # cycle. Do not add another unconditional 50 ms after it.
-                self.stop_event.wait(max(0.,.05-(time.monotonic()-cycle_started)))
+                # Active cycles wait on absolute deadlines BEFORE reading the
+                # next decision. Disconnected authority only needs idle polling.
+                if not authority or not wanted:self.stop_event.wait(.05)
             self.status = 'Control disconnected'
         except Exception as exc:
             failure=str(exc)

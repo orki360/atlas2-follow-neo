@@ -209,11 +209,11 @@ class RemoteSession:
 
 
 class RemoteManual:
-    def __init__(self,client,host,*,on_event=None,decision_provider=None,require_target_policy=False):
+    def __init__(self,client,host,*,on_event=None,decision_provider=None,require_target_policy=False,send_hz=20):
         self.client=client;self.host=host;self.axis_limits=dict(DEFAULT_AXIS_LIMITS)
         self.alive=False;self.stop_event=Flag();self.thread=Alive(self);self.updated=0.
         self.identity=0;self.snapshot={};self.last_state_time=-1.;self.search_test=None
-        value=client.call('manual_create',host,require_target_policy=require_target_policy)
+        value=client.call('manual_create',host,require_target_policy=require_target_policy,send_hz=send_hz)
         self.identity=value['manual']['identity'];client.manual=self;self.apply(value['manual'])
 
     def apply(self,state):
@@ -223,6 +223,7 @@ class RemoteManual:
                     'motion_hold','dance_started','dance_status','axis_limits','status','last_acknowledged','alive'):
             setattr(self,key,state[key])
         self.stop_event.value=state['stopped']
+        self.send_hz=state['send_hz']
         self.search_test=SimpleNamespace(run_id=state['search_run_id']) if state.get('search_run_id') else None
 
     def invoke(self,method,*args,**kwargs):return self.client.call('manual.'+method,*args,identity=self.identity,**kwargs)
@@ -249,6 +250,9 @@ class RemoteManual:
     def pause_control(self,*args,**kwargs):return self.invoke('pause_control',*args,**kwargs)
     def request(self,action):return self.invoke('request',action)
     def set_axis_limits(self,limits):return self.invoke('set_axis_limits',limits)
+    def set_send_hz(self,value):
+        self.send_hz=self.invoke('set_send_hz',value)
+        return self.send_hz
     def start_search_test(self,settings,heading_provider,scenario,*,boost=False):
         return self.invoke('start_search_test',scenario,boost=boost)
     def stop_search_test(self):return self.invoke('stop_search_test')

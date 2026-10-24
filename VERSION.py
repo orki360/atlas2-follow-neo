@@ -1,4 +1,4 @@
 """Application version. Update this value for each release."""
 
-VERSION = "17.0.3"
-REVISION = "v17.0.3-position-source-continuity"
+VERSION = "18.0.1"
+REVISION = "v18.0.1-tcp-absolute-send-cadence"

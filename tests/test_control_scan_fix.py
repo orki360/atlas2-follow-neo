@@ -113,12 +113,14 @@ class KeyboardRecoveryTests(unittest.TestCase):
         self.w.manual.pause_control.assert_called_once_with('Keyboard state unavailable')
         self.w.manual.release.assert_not_called()
     def test_reconnect_starts_with_no_latched_keys(self):
+        self.w.tcp_send_hz=25
         self.w.manual.thread.is_alive.return_value=False
         self.w.ip=Mock(get=Mock(return_value='127.0.0.1'));self.w.dance_selected=False
         self.w.current_axis_limits=Mock(return_value={'yaw':.1,'vertical':.1,'roll':.1,'forward':.1})
         with patch('follow_neo.ui.window.ManualControl') as create:
             self.w.toggle_manual()
             self.assertFalse(self.w.pressed);self.assertFalse(self.w.key_releases)
+            self.assertEqual(create.call_args.kwargs['send_hz'],25)
             create.return_value.enable.assert_not_called()
 
 

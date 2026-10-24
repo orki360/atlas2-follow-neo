@@ -150,6 +150,12 @@ class ProcessRuntimeTests(unittest.TestCase):
             try:
                 info=client.call('ping');self.assertNotEqual(info['pid'],os.getpid())
                 manual=RemoteManual(client,'127.0.0.1',require_target_policy=True)
+                self.assertEqual(manual.send_hz,20)
+                manual.set_send_hz(30)
+                self.assertEqual(manual.control_snapshot()['send_hz'],30)
+                with self.assertRaisesRegex(RuntimeError,'20, 25 or 30'):manual.set_send_hz(100)
+                self.assertEqual(manual.send_hz,30)
+                manual.set_send_hz(25)
                 manual.set_axis_limits(dict(yaw=.2,vertical=.2,roll=.2,forward=.2));manual.start()
                 manual.update(set());manual.enable()
                 deadline=time.monotonic()+.5

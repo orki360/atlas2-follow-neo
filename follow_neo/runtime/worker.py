@@ -230,7 +230,7 @@ class Runtime:
             if m is None or identity!=self.identity:raise RuntimeError('Control connection replaced')
             method=op.split('.')[1]
             allowed=('start','stop','release','enable','start_dance','manual_mode','pause_control',
-                     'request','set_axis_limits','start_search_test','stop_search_test','detailed_logging')
+                     'request','set_axis_limits','set_send_hz','start_search_test','stop_search_test','detailed_logging')
             if method not in allowed:raise ValueError(op)
             # Delayed actions cannot turn into new flight authority. Release is
             # latched independently of this dispatcher and is never age-gated.

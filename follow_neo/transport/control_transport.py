@@ -90,7 +90,12 @@ class ControlChannel:
             self.neutral_sent = True
             self.neutral_acknowledged = False
         if activity.enabled or not value.startswith('rc '):
-            self.emit('control_command_attempt', dict(sequence=self.sequence, command=value, sent_at=stamp))
+            data = dict(sequence=self.sequence, command=value, sent_at=stamp)
+            if activity.enabled:
+                # Diagnostic duration clock only. The ACK/evidence deadline is
+                # still based on the original monotonic stamp above.
+                data['send_attempt_perf_counter'] = time.perf_counter()
+            self.emit('control_command_attempt', data)
         self.sock.settimeout(.10)
         try:
             self.sock.sendall((value+'\r\n').encode('ascii'))

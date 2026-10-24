@@ -289,11 +289,13 @@ class DisplayAndConfigTests(unittest.TestCase):
         self.assertEqual(w.log_control.call_args.args[0],'dance_rejected')
     def test_gui_transport_enforces_policy(self):
         w=FollowLabWindow.__new__(FollowLabWindow);w.manual=None;w.session=None
+        w.tcp_send_hz=20
         w.ip=Mock(get=Mock(return_value='127.0.0.1'));w.log_control=Mock();w.dance_decision=Mock()
         w.current_axis_limits=Mock(return_value=dict(yaw=.5,vertical=.5,roll=.015,forward=.015))
         w.dance_selected=False;w.canvas=Mock();w.clear_keyboard_input=Mock()
         with patch('follow_neo.ui.window.ManualControl') as constructor:w.toggle_manual()
         self.assertIs(constructor.call_args.kwargs['require_target_policy'],True)
+        self.assertEqual(constructor.call_args.kwargs['send_hz'],20)
 
 
 class SessionClassTests(unittest.TestCase):
